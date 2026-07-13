@@ -6,6 +6,12 @@ import mysql from "mysql2/promise";
 
 const app = express();
 
+// Request Logger
+app.use((req, res, next) => {
+  console.log(`[API REQUEST] ${req.method} ${req.path}`);
+  next();
+});
+
 // Enable JSON bodies and CORS
 app.use(express.json());
 app.use((req, res, next) => {
@@ -459,51 +465,60 @@ const dbService = {
 
 // 1. POST /api/auth/login
 app.post("/api/auth/login", async (req: Request, res: Response) => {
-  const { usernameOrEmail, password } = req.body;
-  if (!usernameOrEmail || !password) {
-    return res.status(400).json({ message: "Username/Email dan Password wajib diisi!" });
-  }
-
-  const db = await dbService.loadAll();
-  const user = db.users.find(
-    u => (u.username === usernameOrEmail || u.email === usernameOrEmail) && u.password === password
-  );
-
-  if (!user) {
-    return res.status(401).json({ message: "Username/Email atau Password salah!" });
-  }
-
-  if (user.status === "Inactive") {
-    return res.status(403).json({ message: "Akun Anda dinonaktifkan. Silakan hubungi Administrator!" });
-  }
-
-  const info = getWIBDateTimeString();
-  const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
-
-  const newHistory: LoginHistory = {
-    id: `LH${Date.now()}`,
-    userName: user.username,
-    ip,
-    browser: req.headers["user-agent"] || "Chrome/Firefox/Safari",
-    waktu: info.full,
-    action: "Login"
-  };
-  db.loginHistory.unshift(newHistory);
-  
-  await dbService.saveAll(db);
-  await dbService.logActivity(user.username, `Berhasil Login ke sistem`);
-
-  return res.json({
-    message: "Login Berhasil",
-    user: {
-      id: user.id,
-      name: user.name,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      status: user.status
+  try {
+    const { usernameOrEmail, password } = req.body;
+    if (!usernameOrEmail || !password) {
+      return res.status(400).json({ message: "Username/Email dan Password wajib diisi!" });
     }
-  });
+
+    const db = await dbService.loadAll();
+    const user = db.users.find(
+      u => (u.username === usernameOrEmail || u.email === usernameOrEmail) && u.password === password
+    );
+
+    if (!user) {
+      return res.status(401).json({ message: "Username/Email atau Password salah!" });
+    }
+
+    if (user.status === "Inactive") {
+      return res.status(403).json({ message: "Akun Anda dinonaktifkan. Silakan hubungi Administrator!" });
+    }
+
+    const info = getWIBDateTimeString();
+    const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
+
+    const newHistory: LoginHistory = {
+      id: `LH${Date.now()}`,
+      userName: user.username,
+      ip,
+      browser: req.headers["user-agent"] || "Chrome/Firefox/Safari",
+      waktu: info.full,
+      action: "Login"
+    };
+    db.loginHistory.unshift(newHistory);
+    
+    await dbService.saveAll(db);
+    await dbService.logActivity(user.username, `Berhasil Login ke sistem`);
+
+    return res.json({
+      message: "Login Berhasil",
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status
+      }
+    });
+  } catch (err: any) {
+    console.error("Error in login endpoint:", err);
+    return res.status(500).json({
+      message: "Terjadi kesalahan internal pada server (Login API).",
+      error: err?.message || String(err),
+      stack: err?.stack
+    });
+  }
 });
 
 // 2. POST /api/auth/register
@@ -552,108 +567,117 @@ app.post("/api/auth/register", async (req: Request, res: Response) => {
 
 // 3. POST /api/db/sync
 app.post("/api/db/sync", async (req: Request, res: Response) => {
-  const { clientDb } = req.body;
-  const serverDb = await dbService.loadAll();
+  try {
+    const { clientDb } = req.body;
+    const serverDb = await dbService.loadAll();
 
-  if (!clientDb) {
-    return res.json({ db: serverDb });
-  }
+    if (!clientDb) {
+      return res.json({ db: serverDb });
+    }
 
-  // Merge client logic with server authorities
-  const delScans = serverDb.deletedScans || [];
-  const delUsers = serverDb.deletedUsers || [];
-  const delExp = serverDb.deletedExpedisi || [];
-  const delLay = serverDb.deletedLayanan || [];
+    // Merge client logic with server authorities
+    const delScans = serverDb.deletedScans || [];
+    const delUsers = serverDb.deletedUsers || [];
+    const delExp = serverDb.deletedExpedisi || [];
+    const delLay = serverDb.deletedLayanan || [];
 
-  // Scans Union
-  const scanMap = new Map<string, ScanRecord>();
-  serverDb.scans.forEach(s => {
-    if (s && s.id) scanMap.set(s.id, s);
-  });
-  if (clientDb.scans && Array.isArray(clientDb.scans)) {
-    clientDb.scans.forEach((s: ScanRecord) => {
-      if (s && s.id && !delScans.includes(s.id)) scanMap.set(s.id, s);
+    // Scans Union
+    const scanMap = new Map<string, ScanRecord>();
+    serverDb.scans.forEach(s => {
+      if (s && s.id) scanMap.set(s.id, s);
     });
-  }
-  const mergedScans = Array.from(scanMap.values()).sort((a, b) => a.waktu.localeCompare(b.waktu));
+    if (clientDb.scans && Array.isArray(clientDb.scans)) {
+      clientDb.scans.forEach((s: ScanRecord) => {
+        if (s && s.id && !delScans.includes(s.id)) scanMap.set(s.id, s);
+      });
+    }
+    const mergedScans = Array.from(scanMap.values()).sort((a, b) => a.waktu.localeCompare(b.waktu));
 
-  // Users Union
-  const userMap = new Map<string, User>();
-  if (clientDb.users && Array.isArray(clientDb.users)) {
-    clientDb.users.forEach((u: User) => {
-      if (u && u.username && u.id && !delUsers.includes(u.id)) {
-        userMap.set(u.username.toLowerCase(), u);
-      }
+    // Users Union
+    const userMap = new Map<string, User>();
+    if (clientDb.users && Array.isArray(clientDb.users)) {
+      clientDb.users.forEach((u: User) => {
+        if (u && u.username && u.id && !delUsers.includes(u.id)) {
+          userMap.set(u.username.toLowerCase(), u);
+        }
+      });
+    }
+    serverDb.users.forEach(u => {
+      if (u && u.username) userMap.set(u.username.toLowerCase(), u);
     });
-  }
-  serverDb.users.forEach(u => {
-    if (u && u.username) userMap.set(u.username.toLowerCase(), u);
-  });
-  const mergedUsers = Array.from(userMap.values());
+    const mergedUsers = Array.from(userMap.values());
 
-  // Expedisi Union
-  const expedisiMap = new Map<string, Expedisi>();
-  if (clientDb.expedisi && Array.isArray(clientDb.expedisi)) {
-    clientDb.expedisi.forEach((e: Expedisi) => {
-      if (e && e.id && !delExp.includes(e.id)) expedisiMap.set(e.id, e);
+    // Expedisi Union
+    const expedisiMap = new Map<string, Expedisi>();
+    if (clientDb.expedisi && Array.isArray(clientDb.expedisi)) {
+      clientDb.expedisi.forEach((e: Expedisi) => {
+        if (e && e.id && !delExp.includes(e.id)) expedisiMap.set(e.id, e);
+      });
+    }
+    serverDb.expedisi.forEach(e => {
+      if (e && e.id) expedisiMap.set(e.id, e);
     });
-  }
-  serverDb.expedisi.forEach(e => {
-    if (e && e.id) expedisiMap.set(e.id, e);
-  });
-  const mergedExpedisi = Array.from(expedisiMap.values());
+    const mergedExpedisi = Array.from(expedisiMap.values());
 
-  // Layanan Union
-  const layananMap = new Map<string, Layanan>();
-  if (clientDb.layanan && Array.isArray(clientDb.layanan)) {
-    clientDb.layanan.forEach((l: Layanan) => {
-      if (l && l.id && !delLay.includes(l.id)) layananMap.set(l.id, l);
+    // Layanan Union
+    const layananMap = new Map<string, Layanan>();
+    if (clientDb.layanan && Array.isArray(clientDb.layanan)) {
+      clientDb.layanan.forEach((l: Layanan) => {
+        if (l && l.id && !delLay.includes(l.id)) layananMap.set(l.id, l);
+      });
+    }
+    serverDb.layanan.forEach(l => {
+      if (l && l.id) layananMap.set(l.id, l);
     });
-  }
-  serverDb.layanan.forEach(l => {
-    if (l && l.id) layananMap.set(l.id, l);
-  });
-  const mergedLayanan = Array.from(layananMap.values());
+    const mergedLayanan = Array.from(layananMap.values());
 
-  // Login History
-  const loginHistoryMap = new Map<string, LoginHistory>();
-  if (clientDb.loginHistory && Array.isArray(clientDb.loginHistory)) {
-    clientDb.loginHistory.forEach((lh: LoginHistory) => {
+    // Login History
+    const loginHistoryMap = new Map<string, LoginHistory>();
+    if (clientDb.loginHistory && Array.isArray(clientDb.loginHistory)) {
+      clientDb.loginHistory.forEach((lh: LoginHistory) => {
+        if (lh && lh.id) loginHistoryMap.set(lh.id, lh);
+      });
+    }
+    serverDb.loginHistory.forEach(lh => {
       if (lh && lh.id) loginHistoryMap.set(lh.id, lh);
     });
-  }
-  serverDb.loginHistory.forEach(lh => {
-    if (lh && lh.id) loginHistoryMap.set(lh.id, lh);
-  });
-  const mergedLoginHistory = Array.from(loginHistoryMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
+    const mergedLoginHistory = Array.from(loginHistoryMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
 
-  // Activity Log
-  const activityLogMap = new Map<string, ActivityLog>();
-  if (clientDb.activityLog && Array.isArray(clientDb.activityLog)) {
-    clientDb.activityLog.forEach((al: ActivityLog) => {
+    // Activity Log
+    const activityLogMap = new Map<string, ActivityLog>();
+    if (clientDb.activityLog && Array.isArray(clientDb.activityLog)) {
+      clientDb.activityLog.forEach((al: ActivityLog) => {
+        if (al && al.id) activityLogMap.set(al.id, al);
+      });
+    }
+    serverDb.activityLog.forEach(al => {
       if (al && al.id) activityLogMap.set(al.id, al);
     });
+    const mergedActivityLog = Array.from(activityLogMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
+
+    const mergedDb: DbSchema = {
+      users: mergedUsers,
+      expedisi: mergedExpedisi,
+      layanan: mergedLayanan,
+      scans: mergedScans,
+      loginHistory: mergedLoginHistory,
+      activityLog: mergedActivityLog,
+      deletedUsers: serverDb.deletedUsers || [],
+      deletedExpedisi: serverDb.deletedExpedisi || [],
+      deletedLayanan: serverDb.deletedLayanan || [],
+      deletedScans: serverDb.deletedScans || []
+    };
+
+    await dbService.saveAll(mergedDb);
+    return res.json({ db: mergedDb });
+  } catch (err: any) {
+    console.error("Error in sync endpoint:", err);
+    return res.status(500).json({
+      message: "Terjadi kesalahan internal pada server (Sync API).",
+      error: err?.message || String(err),
+      stack: err?.stack
+    });
   }
-  serverDb.activityLog.forEach(al => {
-    if (al && al.id) activityLogMap.set(al.id, al);
-  });
-  const mergedActivityLog = Array.from(activityLogMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
-
-  const mergedDb: DbSchema = {
-    users: mergedUsers,
-    expedisi: mergedExpedisi,
-    layanan: mergedLayanan,
-    scans: mergedScans,
-    loginHistory: mergedLoginHistory,
-    activityLog: mergedActivityLog,
-    deletedUsers: serverDb.deletedUsers || [],
-    deletedExpedisi: serverDb.deletedExpedisi || [],
-    deletedLayanan: serverDb.deletedLayanan || [],
-    deletedScans: serverDb.deletedScans || []
-  };
-
-  await dbService.saveAll(mergedDb);
-  return res.json({ db: mergedDb });
 });
 
 // 4. GET /api/dashboard/stats
