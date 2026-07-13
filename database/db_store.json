@@ -1,0 +1,101 @@
+{
+  "users": [
+    {
+      "id": "U001",
+      "name": "Muhammad Padli (Admin)",
+      "username": "admin",
+      "email": "admin@logistik.com",
+      "password": "admin123",
+      "role": "Administrator",
+      "status": "Active"
+    },
+    {
+      "id": "U002",
+      "name": "Test User",
+      "username": "testuser",
+      "email": "test@test.com",
+      "password": "testpassword",
+      "role": "Packing",
+      "status": "Active"
+    }
+  ],
+  "expedisi": [],
+  "layanan": [],
+  "scans": [],
+  "loginHistory": [
+    {
+      "id": "LH1783859084156",
+      "userName": "testuser",
+      "ip": "127.0.0.1",
+      "browser": "curl/7.88.1",
+      "waktu": "2026-07-12 19:24:44",
+      "action": "Login"
+    },
+    {
+      "id": "LH1783859077500",
+      "userName": "admin",
+      "ip": "127.0.0.1",
+      "browser": "curl/7.88.1",
+      "waktu": "2026-07-12 19:24:37",
+      "action": "Login"
+    },
+    {
+      "id": "LH1783853313753",
+      "userName": "admin",
+      "ip": "127.0.0.1",
+      "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
+      "waktu": "2026-07-12 17:48:33",
+      "action": "Login"
+    }
+  ],
+  "activityLog": [
+    {
+      "id": "AL1783861414287-682",
+      "userName": "admin",
+      "waktu": "2026-07-12 20:03:34",
+      "action": "Berhasil scan resi logistik [JN1676790466] via Web Scanner"
+    },
+    {
+      "id": "AL1783861211884-779",
+      "userName": "admin",
+      "waktu": "2026-07-12 20:00:11",
+      "action": "Menghapus user: testuser"
+    },
+    {
+      "id": "AL1783859084156-82",
+      "userName": "testuser",
+      "waktu": "2026-07-12 19:24:44",
+      "action": "Berhasil Login ke sistem"
+    },
+    {
+      "id": "AL1783859080929-324",
+      "userName": "testuser",
+      "waktu": "2026-07-12 19:24:40",
+      "action": "Mendaftar akun baru dengan Username: testuser"
+    },
+    {
+      "id": "AL1783859077500-374",
+      "userName": "admin",
+      "waktu": "2026-07-12 19:24:37",
+      "action": "Berhasil Login ke sistem"
+    },
+    {
+      "id": "AL1783853331449-277",
+      "userName": "admin",
+      "waktu": "2026-07-12 17:48:51",
+      "action": "Melakukan Logout dari sistem"
+    },
+    {
+      "id": "AL1783853313754-852",
+      "userName": "admin",
+      "waktu": "2026-07-12 17:48:33",
+      "action": "Berhasil Login ke sistem"
+    },
+    {
+      "id": "AL1783851686081-377",
+      "userName": "admin",
+      "waktu": "2026-07-12 17:21:26",
+      "action": "Berhasil scan resi logistik [JN3026564485] via Web Scanner"
+    }
+  ]
+}

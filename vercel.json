@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    },
+    {
+      "src": "api/**/*.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/expedisi/:id",
+      "destination": "/api/expedisi/[id]"
+    },
+    {
+      "source": "/api/layanan/:id",
+      "destination": "/api/layanan/[id]"
+    },
+    {
+      "source": "/api/users/:id",
+      "destination": "/api/users/[id]"
+    },
+    {
+      "source": "/api/scans/:id",
+      "destination": "/api/scans/[id]"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

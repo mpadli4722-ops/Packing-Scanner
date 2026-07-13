@@ -1,0 +1,177 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered users of the Scan Logistik system",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User ID, e.g., U001"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the user"
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique username"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "password": {
+          "type": "string",
+          "description": "Password string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["Administrator", "Supervisor", "Packing"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Inactive"]
+        }
+      },
+      "required": ["id", "name", "username", "email", "password", "role", "status"]
+    },
+    "Expedisi": {
+      "title": "Expedisi",
+      "description": "Logistics expedition carriers",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Inactive"]
+        }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "Layanan": {
+      "title": "Layanan",
+      "description": "Service types for shipping",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Inactive"]
+        }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "ScanRecord": {
+      "title": "ScanRecord",
+      "description": "Recorded logistics barcode scan",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "resi": {
+          "type": "string"
+        },
+        "waktu": {
+          "type": "string"
+        },
+        "layanan": {
+          "type": "string"
+        },
+        "expedisi": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "userId", "userName", "resi", "waktu", "layanan", "expedisi"]
+    },
+    "LoginHistory": {
+      "title": "LoginHistory",
+      "description": "Historical logins and logouts",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "ip": {
+          "type": "string"
+        },
+        "browser": {
+          "type": "string"
+        },
+        "waktu": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "userName", "ip", "browser", "waktu", "action"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System activity auditing log",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "waktu": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "userName", "waktu", "action"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users"
+    },
+    "expedisi/{expedisiId}": {
+      "schema": "Expedisi",
+      "description": "Collection of expeditions"
+    },
+    "layanan/{layananId}": {
+      "schema": "Layanan",
+      "description": "Collection of services"
+    },
+    "scans/{scanId}": {
+      "schema": "ScanRecord",
+      "description": "Collection of barcode scans"
+    },
+    "loginHistory/{historyId}": {
+      "schema": "LoginHistory",
+      "description": "Collection of login history"
+    },
+    "activityLog/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Collection of activity logs"
+    }
+  }
+}
