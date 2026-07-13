@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import monolithApp from "./api/index.ts";
+import monolithApp from "./api/index.js";
 
 const app = express();
 const PORT = 3000;
