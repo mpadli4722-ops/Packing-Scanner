@@ -5,13 +5,9 @@ import registerHandler from "./api/auth/register";
 import syncHandler from "./api/db/sync";
 import statsHandler from "./api/dashboard/stats";
 import scansHandler from "./api/scans";
-import scansIdHandler from "./api/scans/[id]";
 import usersHandler from "./api/users";
-import usersIdHandler from "./api/users/[id]";
 import expedisiHandler from "./api/expedisi";
-import expedisiIdHandler from "./api/expedisi/[id]";
 import layananHandler from "./api/layanan";
-import layananIdHandler from "./api/layanan/[id]";
 import loginHistoryHandler from "./api/logs/login_history";
 import activityLogHandler from "./api/logs/activity_log";
 import activityHandler from "./api/logs/activity";
@@ -41,22 +37,22 @@ app.get("/api/dashboard/stats", handle(statsHandler));
 
 app.get("/api/scans", handle(scansHandler));
 app.post("/api/scans", handle(scansHandler));
-app.delete("/api/scans/:id", handle(scansIdHandler));
+app.delete("/api/scans/:id", handle(scansHandler));
 
 app.get("/api/users", handle(usersHandler));
 app.post("/api/users", handle(usersHandler));
-app.put("/api/users/:id", handle(usersIdHandler));
-app.delete("/api/users/:id", handle(usersIdHandler));
+app.put("/api/users/:id", handle(usersHandler));
+app.delete("/api/users/:id", handle(usersHandler));
 
 app.get("/api/expedisi", handle(expedisiHandler));
 app.post("/api/expedisi", handle(expedisiHandler));
-app.put("/api/expedisi/:id", handle(expedisiIdHandler));
-app.delete("/api/expedisi/:id", handle(expedisiIdHandler));
+app.put("/api/expedisi/:id", handle(expedisiHandler));
+app.delete("/api/expedisi/:id", handle(expedisiHandler));
 
 app.get("/api/layanan", handle(layananHandler));
 app.post("/api/layanan", handle(layananHandler));
-app.put("/api/layanan/:id", handle(layananIdHandler));
-app.delete("/api/layanan/:id", handle(layananIdHandler));
+app.put("/api/layanan/:id", handle(layananHandler));
+app.delete("/api/layanan/:id", handle(layananHandler));
 
 app.get("/api/logs/login_history", handle(loginHistoryHandler));
 app.get("/api/logs/activity_log", handle(activityLogHandler));

@@ -3,6 +3,61 @@ import { loadDb, saveDb, logActivity, pad3 } from "./lib/db";
 import { User } from "../src/db_seeder";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
+  const id = req.query.id as string | undefined;
+
+  if (id) {
+    if (req.method === "PUT") {
+      const { name, username, email, password, role, status } = req.body;
+      const db = loadDb();
+
+      const userIndex = db.users.findIndex(u => u.id === id);
+      if (userIndex === -1) {
+        return res.status(404).json({ message: "User tidak ditemukan!" });
+      }
+
+      const oldUser = db.users[userIndex];
+      db.users[userIndex] = {
+        ...oldUser,
+        name: name ?? oldUser.name,
+        username: username ?? oldUser.username,
+        email: email ?? oldUser.email,
+        password: password ?? oldUser.password,
+        role: role ?? oldUser.role,
+        status: status ?? oldUser.status
+      };
+
+      saveDb(db);
+      logActivity(db, "admin", `Mengupdate profil/status user: ${db.users[userIndex].username}`);
+      return res.json(db.users[userIndex]);
+    }
+
+    if (req.method === "DELETE") {
+      const db = loadDb();
+      
+      const user = db.users.find(u => u.id === id);
+      if (!user) return res.status(404).json({ message: "User tidak ditemukan!" });
+
+      db.users = db.users.filter(u => u.id !== id);
+      if (!db.deletedUsers) db.deletedUsers = [];
+      if (!db.deletedUsers.includes(id)) {
+        db.deletedUsers.push(id);
+      }
+      saveDb(db);
+
+      logActivity(db, "admin", `Menghapus user: ${user.username}`);
+      return res.json({ message: "User berhasil dihapus!" });
+    }
+
+    if (req.method === "GET") {
+      const db = loadDb();
+      const user = db.users.find(u => u.id === id);
+      if (!user) return res.status(404).json({ message: "User tidak ditemukan!" });
+      return res.json(user);
+    }
+
+    return res.status(405).json({ message: "Method Not Allowed" });
+  }
+
   if (req.method === "GET") {
     const db = loadDb();
     return res.json(db.users);

@@ -3,19 +3,19 @@
   "rewrites": [
     {
       "source": "/api/expedisi/:id",
-      "destination": "/api/expedisi/[id]"
+      "destination": "/api/expedisi?id=:id"
     },
     {
       "source": "/api/layanan/:id",
-      "destination": "/api/layanan/[id]"
+      "destination": "/api/layanan?id=:id"
     },
     {
       "source": "/api/users/:id",
-      "destination": "/api/users/[id]"
+      "destination": "/api/users?id=:id"
     },
     {
       "source": "/api/scans/:id",
-      "destination": "/api/scans/[id]"
+      "destination": "/api/scans?id=:id"
     },
     {
       "source": "/api/(.*)",

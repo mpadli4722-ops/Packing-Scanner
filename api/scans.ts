@@ -3,6 +3,39 @@ import { loadDb, saveDb, logActivity, getWIBDateTimeString } from "./lib/db";
 import { ScanRecord } from "../src/db_seeder";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
+  const id = req.query.id as string | undefined;
+
+  if (id) {
+    if (req.method === "DELETE") {
+      const db = loadDb();
+      
+      const scanIndex = db.scans.findIndex(s => s.id === id);
+      if (scanIndex === -1) {
+        return res.status(404).json({ message: "Data scan tidak ditemukan!" });
+      }
+
+      const scan = db.scans[scanIndex];
+      db.scans.splice(scanIndex, 1);
+      if (!db.deletedScans) db.deletedScans = [];
+      if (!db.deletedScans.includes(id)) {
+        db.deletedScans.push(id);
+      }
+      saveDb(db);
+
+      logActivity(db, "admin", `Menghapus data scan resi: ${scan.resi} (Serial ID: ${scan.id})`);
+      return res.json({ message: "Data scan berhasil dihapus!" });
+    }
+
+    if (req.method === "GET") {
+      const db = loadDb();
+      const scan = db.scans.find(s => s.id === id);
+      if (!scan) return res.status(404).json({ message: "Data scan tidak ditemukan!" });
+      return res.json(scan);
+    }
+
+    return res.status(405).json({ message: "Method Not Allowed" });
+  }
+
   if (req.method === "GET") {
     const { range, username } = req.query;
     const db = loadDb();
