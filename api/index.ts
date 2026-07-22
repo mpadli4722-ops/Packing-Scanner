@@ -1,14 +1,17 @@
 import { Request, Response, NextFunction } from "express";
 import express from "express";
-import fs from "fs";
-import path from "path";
 import mysql from "mysql2/promise";
+import alasql from "alasql";
 
 const app = express();
 
-// Request Logger
+// Request Logger with Execution Time
 app.use((req, res, next) => {
-  console.log(`[API REQUEST] ${req.method} ${req.path}`);
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    console.log(`[API REQUEST] ${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
+  });
   next();
 });
 
@@ -86,197 +89,443 @@ export interface DbSchema {
   deletedScans?: string[];
 }
 
-// MySQL Pool Configuration (Dynamic check for credentials)
-let pool: mysql.Pool | null = null;
-if (process.env.MYSQL_HOST || process.env.MYSQL_URL) {
-  try {
-    pool = mysql.createPool(
-      process.env.MYSQL_URL 
-        ? { uri: process.env.MYSQL_URL }
-        : {
-            host: process.env.MYSQL_HOST,
-            user: process.env.MYSQL_USER,
-            password: process.env.MYSQL_PASSWORD,
-            database: process.env.MYSQL_DATABASE,
-            port: process.env.MYSQL_PORT ? parseInt(process.env.MYSQL_PORT) : 3306,
-            waitForConnections: true,
-            connectionLimit: 10,
-            queueLimit: 0
-          }
-    );
-  } catch (err) {
-    console.error("Failed to initialize MySQL Connection Pool, falling back to local JSON:", err);
-  }
-}
+// ---------------- IN-MEMORY SQL BACKEND FALLBACK ----------------
+// Configured for local development or preview environments when MySQL env vars are not set.
+alasql.options.casesensitive = false;
 
-// JSON Database Fallback configuration
-const DB_DIR = process.env.VERCEL
-  ? "/tmp"
-  : path.join(process.cwd(), "database");
-const DB_FILE = path.join(DB_DIR, "db_store.json");
+class InMemDbPool {
+  private initialized = false;
 
-function generateDefaultSeed(): DbSchema {
-  return {
-    users: [
-      { id: "U001", name: "Muhammad Padli (Admin)", username: "admin", email: "admin@logistik.com", password: "admin123", role: "Administrator", status: "Active" }
-    ],
-    expedisi: [],
-    layanan: [],
-    scans: [],
-    loginHistory: [],
-    activityLog: [],
-    deletedUsers: [],
-    deletedExpedisi: [],
-    deletedLayanan: [],
-    deletedScans: []
-  };
-}
-
-function loadJsonDb(): DbSchema {
-  if (process.env.VERCEL) {
-    if (!fs.existsSync(DB_FILE)) {
-      try {
-        const originalPath = path.join(process.cwd(), "database", "db_store.json");
-        if (fs.existsSync(originalPath)) {
-          const originalData = fs.readFileSync(originalPath, "utf-8");
-          fs.writeFileSync(DB_FILE, originalData, "utf-8");
-        } else {
-          const seed = generateDefaultSeed();
-          fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), "utf-8");
-        }
-      } catch (e) {
-        const seed = generateDefaultSeed();
-        try {
-          fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), "utf-8");
-        } catch (err) {}
-        return seed;
-      }
-    }
-  } else {
-    if (!fs.existsSync(DB_DIR)) {
-      fs.mkdirSync(DB_DIR, { recursive: true });
-    }
-  }
-
-  if (!fs.existsSync(DB_FILE)) {
-    const seed = generateDefaultSeed();
+  public async initSchema() {
+    if (this.initialized) return;
     try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), "utf-8");
-    } catch (err) {}
-    return seed;
-  }
-  try {
-    const data = fs.readFileSync(DB_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (e) {
-    const seed = generateDefaultSeed();
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), "utf-8");
-    } catch (err) {}
-    return seed;
-  }
-}
-
-function saveJsonDb(db: DbSchema) {
-  try {
-    if (!process.env.VERCEL && !fs.existsSync(DB_DIR)) {
-      fs.mkdirSync(DB_DIR, { recursive: true });
-    }
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Failed saving local JSON database:", e);
-  }
-}
-
-// Schema Initializer for MySQL
-let mysqlSchemaInitialized = false;
-async function ensureMySQLSchema() {
-  if (!pool || mysqlSchemaInitialized) return;
-  try {
-    const connection = await pool.getConnection();
-    try {
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS users (
-          id VARCHAR(50) PRIMARY KEY,
-          name VARCHAR(255),
-          username VARCHAR(255) UNIQUE,
-          email VARCHAR(255) UNIQUE,
-          password VARCHAR(255),
-          role VARCHAR(50),
-          status VARCHAR(50)
+          id STRING PRIMARY KEY,
+          name STRING,
+          username STRING,
+          email STRING,
+          password STRING,
+          role STRING,
+          status STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS expedisi (
-          id VARCHAR(50) PRIMARY KEY,
-          name VARCHAR(255),
-          status VARCHAR(50)
+          id STRING PRIMARY KEY,
+          name STRING,
+          status STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS layanan (
-          id VARCHAR(50) PRIMARY KEY,
-          name VARCHAR(255),
-          status VARCHAR(50)
+          id STRING PRIMARY KEY,
+          name STRING,
+          status STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS scans (
-          id VARCHAR(50) PRIMARY KEY,
-          userId VARCHAR(50),
-          userName VARCHAR(255),
-          resi VARCHAR(100) UNIQUE,
-          waktu VARCHAR(100),
-          layanan VARCHAR(100),
-          expedisi VARCHAR(100)
+          id STRING PRIMARY KEY,
+          userId STRING,
+          userName STRING,
+          resi STRING,
+          waktu STRING,
+          layanan STRING,
+          expedisi STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS login_history (
-          id VARCHAR(50) PRIMARY KEY,
-          userName VARCHAR(255),
-          ip VARCHAR(100),
-          browser VARCHAR(255),
-          waktu VARCHAR(100),
-          action VARCHAR(255)
+          id STRING PRIMARY KEY,
+          userName STRING,
+          ip STRING,
+          browser STRING,
+          waktu STRING,
+          action STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS activity_log (
-          id VARCHAR(50) PRIMARY KEY,
-          userName VARCHAR(255),
-          waktu VARCHAR(100),
-          action VARCHAR(255)
+          id STRING PRIMARY KEY,
+          userName STRING,
+          waktu STRING,
+          action STRING
         )
       `);
-      await connection.query(`
+      alasql(`
         CREATE TABLE IF NOT EXISTS deleted_items (
-          item_type VARCHAR(50),
-          item_id VARCHAR(50),
+          item_type STRING,
+          item_id STRING,
           PRIMARY KEY (item_type, item_id)
         )
       `);
 
-      // Seed if empty
-      const [rows] = await connection.query("SELECT COUNT(*) as count FROM users");
-      if ((rows as any)[0].count === 0) {
-        await connection.query(
-          "INSERT INTO users (id, name, username, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      // Seed default admin user
+      const users: any[] = alasql("SELECT * FROM users");
+      if (!users || users.length === 0) {
+        alasql(
+          "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?)",
           ["U001", "Muhammad Padli (Admin)", "admin", "admin@logistik.com", "admin123", "Administrator", "Active"]
         );
-        console.log("Seeded MySQL default administrator user.");
       }
-      mysqlSchemaInitialized = true;
-      console.log("MySQL Schema initialized successfully.");
-    } finally {
-      connection.release();
+
+      // Seed default expedisi
+      const exp: any[] = alasql("SELECT * FROM expedisi");
+      if (!exp || exp.length === 0) {
+        const defaultExpedisi = [
+          ["E001", "JNE", "Active"],
+          ["E002", "J&T", "Active"],
+          ["E003", "SiCepat", "Active"],
+          ["E004", "Anteraja", "Active"],
+          ["E005", "Ninja", "Active"]
+        ];
+        for (const item of defaultExpedisi) {
+          alasql("INSERT INTO expedisi VALUES (?, ?, ?)", item);
+        }
+      }
+
+      // Seed default layanan
+      const lay: any[] = alasql("SELECT * FROM layanan");
+      if (!lay || lay.length === 0) {
+        const defaultLayanan = [
+          ["L001", "Regular", "Active"],
+          ["L002", "Instan", "Active"],
+          ["L003", "Cargo", "Active"]
+        ];
+        for (const item of defaultLayanan) {
+          alasql("INSERT INTO layanan VALUES (?, ?, ?)", item);
+        }
+      }
+
+      this.initialized = true;
+      console.log("[IN-MEM DB] In-Memory database initialized successfully.");
+    } catch (err) {
+      console.error("[IN-MEM DB ERROR] Error initializing schema:", err);
     }
-  } catch (err) {
-    console.error("Failed to initialize MySQL Schema, falling back to local storage:", err);
+  }
+
+  public async query(sql: string, params: any[] = []): Promise<[any, any]> {
+    await this.initSchema();
+
+    let cleanSql = sql.trim();
+
+    // Check 1: SELECT 1
+    if (cleanSql === "SELECT 1") {
+      return [[{ 1: 1 }], []];
+    }
+
+    // Convert MySQL specific keywords
+    if (cleanSql.includes("INSERT IGNORE INTO")) {
+      cleanSql = cleanSql.replace(/INSERT IGNORE INTO/gi, "INSERT OR IGNORE INTO");
+    }
+
+    if (cleanSql.includes("ON DUPLICATE KEY UPDATE")) {
+      const match = cleanSql.match(/INSERT INTO (\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+      if (match) {
+        cleanSql = `REPLACE INTO ${match[1]} (${match[2]}) VALUES (${match[3]})`;
+      }
+    }
+
+    cleanSql = cleanSql.replace(/GROUP BY SUBSTRING\([^)]+\)/gi, (m) => {
+      if (cleanSql.includes(" as tgl")) return "GROUP BY tgl";
+      if (cleanSql.includes(" as m")) return "GROUP BY m";
+      return m;
+    });
+    cleanSql = cleanSql.replace(/GROUP BY SUBSTR\([^)]+\)/gi, (m) => {
+      if (cleanSql.includes(" as tgl")) return "GROUP BY tgl";
+      if (cleanSql.includes(" as m")) return "GROUP BY m";
+      return m;
+    });
+
+    cleanSql = cleanSql.replace(/SUBSTRING/gi, "SUBSTR");
+
+    // Pre-substitute parameters into SQL string for AlaSQL execution to fix LIKE ? and parameter binding quirks
+    let alasqlQuery = cleanSql;
+    let alasqlParams = [...params];
+
+    if (alasqlParams.length > 0 && alasqlQuery.includes("?")) {
+      let pIdx = 0;
+      alasqlQuery = alasqlQuery.replace(/\?/g, () => {
+        if (pIdx < alasqlParams.length) {
+          const val = alasqlParams[pIdx++];
+          if (val === null || val === undefined) return "NULL";
+          if (typeof val === "number" || typeof val === "boolean") return String(val);
+          const safeStr = String(val).replace(/'/g, "''");
+          return `'${safeStr}'`;
+        }
+        return "?";
+      });
+      alasqlParams = [];
+    }
+
+    try {
+      const res = alasql(alasqlQuery, alasqlParams);
+      if (typeof res === "number") {
+        return [{ affectedRows: res }, []];
+      }
+      return [res, []];
+    } catch (err: any) {
+      if (cleanSql.toUpperCase().startsWith("SELECT")) {
+        // Fallback JavaScript filtering for in-memory queries when AlaSQL syntax differs from MySQL
+        try {
+          if (cleanSql.includes("scans WHERE waktu >= ?")) {
+            const allScans: any[] = alasql("SELECT * FROM scans");
+            const minWaktu = params[0] || "";
+            const filtered = allScans.filter(s => s.waktu >= minWaktu);
+            const map: { [tgl: string]: number } = {};
+            filtered.forEach(s => {
+              const tgl = (s.waktu || "").substring(0, 10);
+              map[tgl] = (map[tgl] || 0) + 1;
+            });
+            const res = Object.keys(map).map(tgl => ({ tgl, total: map[tgl] }));
+            return [res, []];
+          }
+          if (cleanSql.includes("scans WHERE waktu LIKE ?")) {
+            const allScans: any[] = alasql("SELECT * FROM scans");
+            const pattern = (params[0] || "").replace("%", "");
+            const filtered = allScans.filter(s => (s.waktu || "").startsWith(pattern));
+            const map: { [m: string]: number } = {};
+            filtered.forEach(s => {
+              const m = (s.waktu || "").substring(5, 7);
+              map[m] = (map[m] || 0) + 1;
+            });
+            const res = Object.keys(map).map(m => ({ m, total: map[m] }));
+            return [res, []];
+          }
+        } catch (fbErr) {
+          // Silent fallback
+        }
+        return [[], []];
+      }
+      return [{ affectedRows: 0 }, []];
+    }
   }
 }
 
-// DateTime formatting helpers (WIB timezone)
+// ---------------- MYSQL / IN-MEM POOL SELECTION ----------------
+let mysqlPool: mysql.Pool | null = null;
+let inMemPool: InMemDbPool | null = null;
+let mysqlSchemaInitialized = false;
+
+async function initializeMysqlSchema(p: mysql.Pool) {
+  if (mysqlSchemaInitialized) return;
+  try {
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255),
+        username VARCHAR(255) UNIQUE,
+        email VARCHAR(255) UNIQUE,
+        password VARCHAR(255),
+        role VARCHAR(50),
+        status VARCHAR(50)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS expedisi (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255),
+        status VARCHAR(50)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS layanan (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255),
+        status VARCHAR(50)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS scans (
+        id VARCHAR(50) PRIMARY KEY,
+        userId VARCHAR(50),
+        userName VARCHAR(255),
+        resi VARCHAR(100),
+        waktu VARCHAR(100),
+        layanan VARCHAR(100),
+        expedisi VARCHAR(100)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS login_history (
+        id VARCHAR(50) PRIMARY KEY,
+        userName VARCHAR(255),
+        ip VARCHAR(100),
+        browser VARCHAR(255),
+        waktu VARCHAR(100),
+        action VARCHAR(255)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS activity_log (
+        id VARCHAR(50) PRIMARY KEY,
+        userName VARCHAR(255),
+        waktu VARCHAR(100),
+        action VARCHAR(255)
+      )
+    `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS deleted_items (
+        item_type VARCHAR(50),
+        item_id VARCHAR(50),
+        PRIMARY KEY (item_type, item_id)
+      )
+    `);
+
+    // Seed default admin user if empty
+    const [uRows]: any = await p.query("SELECT COUNT(*) as count FROM users");
+    if (uRows && uRows[0]?.count === 0) {
+      await p.query(
+        "INSERT IGNORE INTO users (id, name, username, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ["U001", "Muhammad Padli (Admin)", "admin", "admin@logistik.com", "admin123", "Administrator", "Active"]
+      );
+    }
+
+    // Seed default expedisi if empty
+    const [eRows]: any = await p.query("SELECT COUNT(*) as count FROM expedisi");
+    if (eRows && eRows[0]?.count === 0) {
+      const defaultExpedisi = [
+        ["E001", "JNE", "Active"],
+        ["E002", "J&T", "Active"],
+        ["E003", "SiCepat", "Active"],
+        ["E004", "Anteraja", "Active"],
+        ["E005", "Ninja", "Active"]
+      ];
+      for (const exp of defaultExpedisi) {
+        await p.query("INSERT IGNORE INTO expedisi (id, name, status) VALUES (?, ?, ?)", exp);
+      }
+    }
+
+    // Seed default layanan if empty
+    const [lRows]: any = await p.query("SELECT COUNT(*) as count FROM layanan");
+    if (lRows && lRows[0]?.count === 0) {
+      const defaultLayanan = [
+        ["L001", "Regular", "Active"],
+        ["L002", "Instan", "Active"],
+        ["L003", "Cargo", "Active"]
+      ];
+      for (const lay of defaultLayanan) {
+        await p.query("INSERT IGNORE INTO layanan (id, name, status) VALUES (?, ?, ?)", lay);
+      }
+    }
+
+    mysqlSchemaInitialized = true;
+    console.log("[MYSQL DB] MySQL Schema initialized successfully");
+  } catch (err) {
+    console.error("[MYSQL DB ERROR] Error initializing schema:", err);
+  }
+}
+
+interface DbQueryErrorLog {
+  timestamp: string;
+  sql: string;
+  params?: any;
+  error: string;
+}
+
+const recentQueryErrors: DbQueryErrorLog[] = [];
+
+export function recordQueryError(sql: string, params: any, err: any) {
+  const errorMessage = err?.message || String(err);
+  const info = getWIBDateTimeString();
+  recentQueryErrors.unshift({
+    timestamp: info.full,
+    sql,
+    params,
+    error: errorMessage,
+  });
+  if (recentQueryErrors.length > 25) {
+    recentQueryErrors.pop();
+  }
+}
+
+function getPool(): { query: (sql: string, params?: any[]) => Promise<[any, any]> } {
+  const host = process.env.MYSQL_HOST;
+  const url = process.env.MYSQL_URL;
+
+  let basePool: { query: (sql: string, params?: any[]) => Promise<[any, any]> } | null = null;
+
+  // If MySQL credentials exist, use MySQL Pool
+  if (host || url) {
+    if (!mysqlPool) {
+      try {
+        if (url) {
+          mysqlPool = mysql.createPool({
+            uri: url,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            connectTimeout: 10000,
+          });
+        } else {
+          mysqlPool = mysql.createPool({
+            host: process.env.MYSQL_HOST,
+            user: process.env.MYSQL_USER,
+            password: process.env.MYSQL_PASSWORD,
+            database: process.env.MYSQL_DATABASE,
+            port: process.env.MYSQL_PORT ? parseInt(process.env.MYSQL_PORT, 10) : 3306,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            connectTimeout: 10000,
+          });
+        }
+
+        mysqlPool.query("SELECT 1")
+          .then(() => {
+            console.log("[MYSQL DB] Database Connected successfully");
+            if (mysqlPool) initializeMysqlSchema(mysqlPool);
+          })
+          .catch((err) => {
+            console.error("[MYSQL DB ERROR] Connection test failed:", err.message);
+            recordQueryError("SELECT 1 (Connection test)", [], err);
+          });
+      } catch (err) {
+        console.error("[MYSQL DB ERROR] Failed to initialize Pool:", err);
+        recordQueryError("mysql.createPool", [], err);
+      }
+    }
+
+    if (mysqlPool) {
+      basePool = mysqlPool;
+    }
+  }
+
+  // Fallback to In-Memory DB Pool for smooth local preview & testing
+  if (!basePool) {
+    if (!inMemPool) {
+      inMemPool = new InMemDbPool();
+      inMemPool.initSchema();
+    }
+    basePool = inMemPool;
+  }
+
+  return {
+    query: async (sql: string, params: any[] = []): Promise<[any, any]> => {
+      try {
+        const result = await basePool!.query(sql, params);
+        return result;
+      } catch (err: any) {
+        recordQueryError(sql, params, err);
+        throw err;
+      }
+    }
+  };
+}
+
+// Database Check Middleware
+function checkDbConnection(req: Request, res: Response, next: NextFunction) {
+  const p = getPool();
+  if (!p) {
+    return res.status(500).json({ message: "Database configuration is missing." });
+  }
+  next();
+}
+
+app.use("/api", checkDbConnection);
+
+// WIB DateTime Helper
 export function getWIBDateTimeString(dateObj: Date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Jakarta",
@@ -288,15 +537,15 @@ export function getWIBDateTimeString(dateObj: Date = new Date()) {
     second: "2-digit",
     hour12: false
   });
-  
+
   const parts = formatter.formatToParts(dateObj);
   const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
-  
+
   const ymd = `${map.year}-${map.month}-${map.day}`;
   const full = `${ymd} ${map.hour === "24" ? "00" : map.hour}:${map.minute}:${map.second}`;
   const dateKey = `${map.year}${map.month}${map.day}`;
   const ym = `${map.year}-${map.month}`;
-  
+
   return { ymd, full, dateKey, ym };
 }
 
@@ -307,161 +556,142 @@ function pad4(num: number) {
   return num.toString().padStart(4, "0");
 }
 
-// Unified Database Service (MySQL & Local JSON Hybrid)
-const dbService = {
-  async loadAll(): Promise<DbSchema> {
-    if (pool) {
-      await ensureMySQLSchema();
-      try {
-        const [users] = await pool.query("SELECT * FROM users");
-        const [expedisi] = await pool.query("SELECT * FROM expedisi");
-        const [layanan] = await pool.query("SELECT * FROM layanan");
-        const [scans] = await pool.query("SELECT * FROM scans");
-        const [loginHistory] = await pool.query("SELECT * FROM login_history ORDER BY waktu DESC");
-        const [activityLog] = await pool.query("SELECT * FROM activity_log ORDER BY waktu DESC");
-        
-        const [delUsersRows] = await pool.query("SELECT item_id FROM deleted_items WHERE item_type = 'user'");
-        const [delExpRows] = await pool.query("SELECT item_id FROM deleted_items WHERE item_type = 'expedisi'");
-        const [delLayRows] = await pool.query("SELECT item_id FROM deleted_items WHERE item_type = 'layanan'");
-        const [delScansRows] = await pool.query("SELECT item_id FROM deleted_items WHERE item_type = 'scan'");
-
-        return {
-          users: users as User[],
-          expedisi: expedisi as Expedisi[],
-          layanan: layanan as Layanan[],
-          scans: scans as ScanRecord[],
-          loginHistory: loginHistory as LoginHistory[],
-          activityLog: activityLog as ActivityLog[],
-          deletedUsers: (delUsersRows as any[]).map(r => r.item_id),
-          deletedExpedisi: (delExpRows as any[]).map(r => r.item_id),
-          deletedLayanan: (delLayRows as any[]).map(r => r.item_id),
-          deletedScans: (delScansRows as any[]).map(r => r.item_id)
-        };
-      } catch (err) {
-        console.error("Failed to query MySQL, using JSON fallback:", err);
-      }
-    }
-    return loadJsonDb();
-  },
-
-  async saveAll(db: DbSchema): Promise<void> {
-    if (pool) {
-      await ensureMySQLSchema();
-      try {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-
-          // 1. Users sync/upsert
-          for (const u of db.users) {
-            await connection.query(
-              `INSERT INTO users (id, name, username, email, password, role, status) 
-               VALUES (?, ?, ?, ?, ?, ?, ?) 
-               ON DUPLICATE KEY UPDATE name = VALUES(name), username = VALUES(username), email = VALUES(email), password = VALUES(password), role = VALUES(role), status = VALUES(status)`,
-              [u.id, u.name, u.username, u.email, u.password, u.role, u.status]
-            );
-          }
-          if (db.deletedUsers && db.deletedUsers.length > 0) {
-            await connection.query("DELETE FROM users WHERE id IN (?)", [db.deletedUsers]);
-            for (const id of db.deletedUsers) {
-              await connection.query("INSERT IGNORE INTO deleted_items (item_type, item_id) VALUES ('user', ?)", [id]);
-            }
-          }
-
-          // 2. Expedisi sync/upsert
-          for (const e of db.expedisi) {
-            await connection.query(
-              `INSERT INTO expedisi (id, name, status) 
-               VALUES (?, ?, ?) 
-               ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status)`,
-              [e.id, e.name, e.status]
-            );
-          }
-          if (db.deletedExpedisi && db.deletedExpedisi.length > 0) {
-            await connection.query("DELETE FROM expedisi WHERE id IN (?)", [db.deletedExpedisi]);
-            for (const id of db.deletedExpedisi) {
-              await connection.query("INSERT IGNORE INTO deleted_items (item_type, item_id) VALUES ('expedisi', ?)", [id]);
-            }
-          }
-
-          // 3. Layanan sync/upsert
-          for (const l of db.layanan) {
-            await connection.query(
-              `INSERT INTO layanan (id, name, status) 
-               VALUES (?, ?, ?) 
-               ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status)`,
-              [l.id, l.name, l.status]
-            );
-          }
-          if (db.deletedLayanan && db.deletedLayanan.length > 0) {
-            await connection.query("DELETE FROM layanan WHERE id IN (?)", [db.deletedLayanan]);
-            for (const id of db.deletedLayanan) {
-              await connection.query("INSERT IGNORE INTO deleted_items (item_type, item_id) VALUES ('layanan', ?)", [id]);
-            }
-          }
-
-          // 4. Scans sync/upsert
-          for (const s of db.scans) {
-            await connection.query(
-              `INSERT INTO scans (id, userId, userName, resi, waktu, layanan, expedisi) 
-               VALUES (?, ?, ?, ?, ?, ?, ?) 
-               ON DUPLICATE KEY UPDATE userId = VALUES(userId), userName = VALUES(userName), resi = VALUES(resi), waktu = VALUES(waktu), layanan = VALUES(layanan), expedisi = VALUES(expedisi)`,
-              [s.id, s.userId, s.userName, s.resi, s.waktu, s.layanan, s.expedisi]
-            );
-          }
-          if (db.deletedScans && db.deletedScans.length > 0) {
-            await connection.query("DELETE FROM scans WHERE id IN (?)", [db.deletedScans]);
-            for (const id of db.deletedScans) {
-              await connection.query("INSERT IGNORE INTO deleted_items (item_type, item_id) VALUES ('scan', ?)", [id]);
-            }
-          }
-
-          // 5. Append logs
-          for (const lh of db.loginHistory) {
-            await connection.query(
-              `INSERT IGNORE INTO login_history (id, userName, ip, browser, waktu, action) 
-               VALUES (?, ?, ?, ?, ?, ?)`,
-              [lh.id, lh.userName, lh.ip, lh.browser, lh.waktu, lh.action]
-            );
-          }
-          for (const al of db.activityLog) {
-            await connection.query(
-              `INSERT IGNORE INTO activity_log (id, userName, waktu, action) 
-               VALUES (?, ?, ?, ?)`,
-              [al.id, al.userName, al.waktu, al.action]
-            );
-          }
-
-          await connection.commit();
-          return;
-        } catch (err) {
-          await connection.rollback();
-          throw err;
-        } finally {
-          connection.release();
-        }
-      } catch (err) {
-        console.error("Failed saving to MySQL database, fallback to JSON save:", err);
-      }
-    }
-    saveJsonDb(db);
-  },
-
-  async logActivity(userName: string, action: string): Promise<void> {
-    const db = await this.loadAll();
+// Activity Logger Helper
+async function logActivity(userName: string, action: string): Promise<void> {
+  const p = getPool();
+  if (!p) return;
+  try {
     const info = getWIBDateTimeString();
-    const newLog: ActivityLog = {
-      id: `AL${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      userName,
-      waktu: info.full,
-      action
-    };
-    db.activityLog.unshift(newLog);
-    await this.saveAll(db);
+    const id = `AL${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await p.query(
+      "INSERT INTO activity_log (id, userName, waktu, action) VALUES (?, ?, ?, ?)",
+      [id, userName || "", info.full, action || ""]
+    );
+  } catch (err) {
+    console.error("[DB ERROR] Failed logging activity:", err);
   }
-};
+}
 
 // ---------------------- ENDPOINTS ----------------------
+
+// 0a. GET /api/debug/db-health
+app.get(["/api/debug/db-health", "/api/debug/db-health/"], async (req: Request, res: Response) => {
+  try {
+    const p = getPool();
+    const isMysql = !!(process.env.MYSQL_HOST || process.env.MYSQL_URL);
+    
+    let dbConnected = false;
+    let testError: string | null = null;
+
+    try {
+      const [rows]: any = await p.query("SELECT 1");
+      dbConnected = Array.isArray(rows) && rows.length > 0;
+    } catch (err: any) {
+      dbConnected = false;
+      testError = err?.message || String(err);
+      recordQueryError("SELECT 1 (db-health check)", [], err);
+    }
+
+    const poolState = {
+      mode: isMysql ? "MySQL" : "In-Memory SQL (AlaSQL)",
+      isMysqlConfigured: isMysql,
+      mysqlHost: process.env.MYSQL_HOST || "Not Set",
+      mysqlDatabase: process.env.MYSQL_DATABASE || "Not Set",
+      mysqlUser: process.env.MYSQL_USER || "Not Set",
+      mysqlPort: process.env.MYSQL_PORT || "3306 (default)",
+      mysqlUrlConfigured: !!process.env.MYSQL_URL,
+      mysqlPoolInitialized: !!mysqlPool,
+      mysqlSchemaInitialized,
+      connectionLimit: 10,
+      queueLimit: 0,
+      testQueryError: testError,
+    };
+
+    const healthResponse = {
+      dbConnected,
+      status: dbConnected ? "OK" : "ERROR",
+      timestamp: getWIBDateTimeString().full,
+      poolState,
+      recentErrors: recentQueryErrors,
+    };
+
+    console.log("[DB HEALTH CHECK]", JSON.stringify(healthResponse));
+    return res.status(dbConnected ? 200 : 500).json(healthResponse);
+  } catch (err: any) {
+    console.error("[DB HEALTH ERROR]", err);
+    return res.status(500).json({
+      dbConnected: false,
+      status: "ERROR",
+      error: err?.message || String(err),
+      recentErrors: recentQueryErrors,
+    });
+  }
+});
+
+// 0b. GET /api/diagnostic and GET /api/health
+app.get(["/api/diagnostic", "/api/health"], async (req: Request, res: Response) => {
+  try {
+    const p = getPool();
+    const isMysql = !!(process.env.MYSQL_HOST || process.env.MYSQL_URL);
+    const mode = isMysql ? "MySQL" : "In-Memory SQL (AlaSQL)";
+    
+    // Check connection with a ping query
+    let testResult = false;
+    let dbError = null;
+    try {
+      const [ping]: any = await p.query("SELECT 1");
+      testResult = !!ping;
+    } catch (err: any) {
+      dbError = err.message || String(err);
+    }
+
+    // Gather table counts
+    let tableCounts: Record<string, number> = {};
+    if (testResult) {
+      try {
+        const [uCount]: any = await p.query("SELECT COUNT(*) as c FROM users");
+        const [eCount]: any = await p.query("SELECT COUNT(*) as c FROM expedisi");
+        const [lCount]: any = await p.query("SELECT COUNT(*) as c FROM layanan");
+        const [sCount]: any = await p.query("SELECT COUNT(*) as c FROM scans");
+        const [lhCount]: any = await p.query("SELECT COUNT(*) as c FROM login_history");
+        const [alCount]: any = await p.query("SELECT COUNT(*) as c FROM activity_log");
+
+        tableCounts = {
+          users: uCount[0]?.c ?? uCount[0]?.count ?? 0,
+          expedisi: eCount[0]?.c ?? eCount[0]?.count ?? 0,
+          layanan: lCount[0]?.c ?? lCount[0]?.count ?? 0,
+          scans: sCount[0]?.c ?? sCount[0]?.count ?? 0,
+          loginHistory: lhCount[0]?.c ?? lhCount[0]?.count ?? 0,
+          activityLog: alCount[0]?.c ?? alCount[0]?.count ?? 0,
+        };
+      } catch (err: any) {
+        console.error("[DIAGNOSTIC ERROR] Failed gathering table counts:", err);
+      }
+    }
+
+    const diagnosticData = {
+      status: testResult ? "OK" : "ERROR",
+      timestamp: getWIBDateTimeString().full,
+      dbMode: mode,
+      dbConnected: testResult,
+      dbError,
+      envConfigured: {
+        MYSQL_HOST: process.env.MYSQL_HOST ? "Configured" : "Not Set",
+        MYSQL_DATABASE: process.env.MYSQL_DATABASE || "Not Set",
+        MYSQL_USER: process.env.MYSQL_USER || "Not Set",
+        MYSQL_PORT: process.env.MYSQL_PORT || "3306 (default)",
+        MYSQL_URL: process.env.MYSQL_URL ? "Configured" : "Not Set",
+      },
+      tableCounts
+    };
+
+    console.log("[DIAGNOSTIC VERIFY] DB Status:", JSON.stringify(diagnosticData));
+    return res.status(testResult ? 200 : 500).json(diagnosticData);
+  } catch (err: any) {
+    console.error("[DIAGNOSTIC ERROR] Diagnostic handler error:", err);
+    return res.status(500).json({ status: "ERROR", error: err.message || String(err) });
+  }
+});
 
 // 1. POST /api/auth/login
 app.post("/api/auth/login", async (req: Request, res: Response) => {
@@ -471,14 +701,17 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Username/Email dan Password wajib diisi!" });
     }
 
-    const db = await dbService.loadAll();
-    const user = db.users.find(
-      u => (u.username === usernameOrEmail || u.email === usernameOrEmail) && u.password === password
+    const p = getPool();
+    const [rows]: any = await p.query(
+      "SELECT * FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)) AND password = ? LIMIT 1",
+      [usernameOrEmail, usernameOrEmail, password]
     );
 
-    if (!user) {
+    if (!rows || rows.length === 0) {
       return res.status(401).json({ message: "Username/Email atau Password salah!" });
     }
+
+    const user: User = rows[0];
 
     if (user.status === "Inactive") {
       return res.status(403).json({ message: "Akun Anda dinonaktifkan. Silakan hubungi Administrator!" });
@@ -487,18 +720,20 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
     const info = getWIBDateTimeString();
     const ip = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
 
-    const newHistory: LoginHistory = {
-      id: `LH${Date.now()}`,
-      userName: user.username,
-      ip,
-      browser: req.headers["user-agent"] || "Chrome/Firefox/Safari",
-      waktu: info.full,
-      action: "Login"
-    };
-    db.loginHistory.unshift(newHistory);
-    
-    await dbService.saveAll(db);
-    await dbService.logActivity(user.username, `Berhasil Login ke sistem`);
+    const newHistoryId = `LH${Date.now()}`;
+    await p.query(
+      "INSERT INTO login_history (id, userName, ip, browser, waktu, action) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        newHistoryId,
+        user.username || "",
+        ip || "",
+        (req.headers["user-agent"] as string) || "Browser",
+        info.full,
+        "Login"
+      ]
+    );
+
+    await logActivity(user.username, "Berhasil Login ke sistem");
 
     return res.json({
       message: "Login Berhasil",
@@ -512,659 +747,994 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
       }
     });
   } catch (err: any) {
-    console.error("Error in login endpoint:", err);
-    return res.status(500).json({
-      message: "Terjadi kesalahan internal pada server (Login API).",
-      error: err?.message || String(err),
-      stack: err?.stack
-    });
+    console.error("[DB ERROR] Error in login endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
 // 2. POST /api/auth/register
 app.post("/api/auth/register", async (req: Request, res: Response) => {
-  const { name, username, email, password, confirmPassword } = req.body;
-  
-  if (!name || !username || !email || !password || !confirmPassword) {
-    return res.status(400).json({ message: "Semua kolom wajib diisi!" });
+  try {
+    const { name, username, email, password, confirmPassword } = req.body;
+
+    if (!name || !username || !email || !password || !confirmPassword) {
+      return res.status(400).json({ message: "Semua kolom wajib diisi!" });
+    }
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Konfirmasi password tidak cocok!" });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ message: "Password minimal harus 8 karakter!" });
+    }
+
+    const p = getPool();
+    const [existRows]: any = await p.query(
+      "SELECT username, email FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) LIMIT 1",
+      [username, email]
+    );
+
+    if (existRows && existRows.length > 0) {
+      if (existRows[0].username && existRows[0].username.toLowerCase() === username.toLowerCase()) {
+        return res.status(400).json({ message: "Username sudah digunakan!" });
+      }
+      return res.status(400).json({ message: "Email sudah digunakan!" });
+    }
+
+    const [countRows]: any = await p.query("SELECT COUNT(*) as count FROM users");
+    let userSeq = (countRows[0]?.count || 0) + 1;
+    let newId = `U${pad3(userSeq)}`;
+    while (true) {
+      const [chk]: any = await p.query("SELECT 1 FROM users WHERE id = ? LIMIT 1", [newId]);
+      if (!chk || chk.length === 0) break;
+      userSeq++;
+      newId = `U${pad3(userSeq)}`;
+    }
+
+    const newUser: User = {
+      id: newId,
+      name,
+      username,
+      email,
+      password,
+      role: "Packing",
+      status: "Active"
+    };
+
+    await p.query(
+      "INSERT INTO users (id, name, username, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [newUser.id, newUser.name || "", newUser.username || "", newUser.email || "", newUser.password || "", newUser.role || "Packing", newUser.status || "Active"]
+    );
+
+    await logActivity(username, `Mendaftar akun baru dengan Username: ${username}`);
+
+    return res.status(201).json({ message: "Registrasi Berhasil! Silakan login." });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in register endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-  if (password !== confirmPassword) {
-    return res.status(400).json({ message: "Konfirmasi password tidak cocok!" });
-  }
-  if (password.length < 8) {
-    return res.status(400).json({ message: "Password minimal harus 8 karakter!" });
-  }
-
-  const db = await dbService.loadAll();
-
-  // Validate uniqueness
-  const existUsername = db.users.some(u => u.username.toLowerCase() === username.toLowerCase());
-  const existEmail = db.users.some(u => u.email.toLowerCase() === email.toLowerCase());
-
-  if (existUsername) {
-    return res.status(400).json({ message: "Username sudah digunakan!" });
-  }
-  if (existEmail) {
-    return res.status(400).json({ message: "Email sudah digunakan!" });
-  }
-
-  const newUser: User = {
-    id: `U${pad3(db.users.length + 1)}`,
-    name,
-    username,
-    email,
-    password, // Plain text as requested
-    role: "Packing", // Default role
-    status: "Active"
-  };
-
-  db.users.push(newUser);
-  await dbService.saveAll(db);
-  await dbService.logActivity(username, `Mendaftar akun baru dengan Username: ${username}`);
-
-  return res.status(201).json({ message: "Registrasi Berhasil! Silakan login." });
 });
 
 // 3. POST /api/db/sync
 app.post("/api/db/sync", async (req: Request, res: Response) => {
   try {
+    const p = getPool();
     const { clientDb } = req.body;
-    const serverDb = await dbService.loadAll();
 
-    if (!clientDb) {
-      return res.json({ db: serverDb });
-    }
+    if (clientDb) {
+      // Load deleted item sets from DB
+      const [delUserRows]: any = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'user'");
+      const [delExpRows]: any = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'expedisi'");
+      const [delLayRows]: any = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'layanan'");
+      const [delScanRows]: any = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'scan'");
 
-    // Merge client logic with server authorities
-    const delScans = serverDb.deletedScans || [];
-    const delUsers = serverDb.deletedUsers || [];
-    const delExp = serverDb.deletedExpedisi || [];
-    const delLay = serverDb.deletedLayanan || [];
+      const delUsers = new Set((delUserRows as any[]).map(r => r.item_id));
+      const delExp = new Set((delExpRows as any[]).map(r => r.item_id));
+      const delLay = new Set((delLayRows as any[]).map(r => r.item_id));
+      const delScans = new Set((delScanRows as any[]).map(r => r.item_id));
 
-    // Scans Union
-    const scanMap = new Map<string, ScanRecord>();
-    serverDb.scans.forEach(s => {
-      if (s && s.id) scanMap.set(s.id, s);
-    });
-    if (clientDb.scans && Array.isArray(clientDb.scans)) {
-      clientDb.scans.forEach((s: ScanRecord) => {
-        if (s && s.id && !delScans.includes(s.id)) scanMap.set(s.id, s);
-      });
-    }
-    const mergedScans = Array.from(scanMap.values()).sort((a, b) => a.waktu.localeCompare(b.waktu));
-
-    // Users Union
-    const userMap = new Map<string, User>();
-    if (clientDb.users && Array.isArray(clientDb.users)) {
-      clientDb.users.forEach((u: User) => {
-        if (u && u.username && u.id && !delUsers.includes(u.id)) {
-          userMap.set(u.username.toLowerCase(), u);
+      // Sync Client Users
+      if (Array.isArray(clientDb.users)) {
+        for (const u of clientDb.users) {
+          if (u && u.id && !delUsers.has(u.id)) {
+            await p.query(
+              `INSERT INTO users (id, name, username, email, password, role, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE name = VALUES(name), username = VALUES(username), email = VALUES(email), password = VALUES(password), role = VALUES(role), status = VALUES(status)`,
+              [u.id, u.name || "", u.username || "", u.email || "", u.password || "", u.role || "Packing", u.status || "Active"]
+            );
+          }
         }
+      }
+
+      // Sync Client Expedisi
+      if (Array.isArray(clientDb.expedisi)) {
+        for (const e of clientDb.expedisi) {
+          if (e && e.id && !delExp.has(e.id)) {
+            await p.query(
+              `INSERT INTO expedisi (id, name, status)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status)`,
+              [e.id, e.name || "", e.status || "Active"]
+            );
+          }
+        }
+      }
+
+      // Sync Client Layanan
+      if (Array.isArray(clientDb.layanan)) {
+        for (const l of clientDb.layanan) {
+          if (l && l.id && !delLay.has(l.id)) {
+            await p.query(
+              `INSERT INTO layanan (id, name, status)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status)`,
+              [l.id, l.name || "", l.status || "Active"]
+            );
+          }
+        }
+      }
+
+      // Sync Client Scans
+      if (Array.isArray(clientDb.scans)) {
+        for (const s of clientDb.scans) {
+          if (s && s.id && !delScans.has(s.id)) {
+            const resolvedName = (s.userName && s.userName.trim()) ? s.userName : "Muhammad Padli (Admin)";
+            await p.query(
+              `INSERT INTO scans (id, userId, userName, resi, waktu, layanan, expedisi)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE userId = VALUES(userId), userName = IF(VALUES(userName) != '', VALUES(userName), userName), resi = VALUES(resi), waktu = VALUES(waktu), layanan = VALUES(layanan), expedisi = VALUES(expedisi)`,
+              [s.id, s.userId || "U001", resolvedName, s.resi || "", s.waktu || "", s.layanan || "", s.expedisi || ""]
+            );
+          }
+        }
+      }
+
+      // Sync Client Login History
+      if (Array.isArray(clientDb.loginHistory)) {
+        for (const lh of clientDb.loginHistory) {
+          if (lh && lh.id) {
+            await p.query(
+              `INSERT IGNORE INTO login_history (id, userName, ip, browser, waktu, action) VALUES (?, ?, ?, ?, ?, ?)`,
+              [lh.id, lh.userName || "", lh.ip || "", lh.browser || "", lh.waktu || "", lh.action || "Login"]
+            );
+          }
+        }
+      }
+
+      // Sync Client Activity Log
+      if (Array.isArray(clientDb.activityLog)) {
+        for (const al of clientDb.activityLog) {
+          if (al && al.id) {
+            await p.query(
+              `INSERT IGNORE INTO activity_log (id, userName, waktu, action) VALUES (?, ?, ?, ?)`,
+              [al.id, al.userName || "", al.waktu || "", al.action || ""]
+            );
+          }
+        }
+      }
+    }
+
+    // Read full merged DB
+    const [users] = await p.query("SELECT * FROM users");
+    const [expedisi] = await p.query("SELECT * FROM expedisi");
+    const [layanan] = await p.query("SELECT * FROM layanan");
+    const [scans] = await p.query("SELECT * FROM scans ORDER BY waktu ASC");
+    const [loginHistory] = await p.query("SELECT * FROM login_history ORDER BY waktu DESC");
+    const [activityLog] = await p.query("SELECT * FROM activity_log ORDER BY waktu DESC");
+
+    const userMapSync: { [id: string]: string } = {};
+    if (Array.isArray(users)) {
+      (users as any[]).forEach(u => {
+        const displayName = u.name || u.username;
+        if (u.id) userMapSync[u.id] = displayName;
+        if (u.username) userMapSync[u.username.toLowerCase()] = displayName;
+        if (u.name) userMapSync[u.name.toLowerCase()] = displayName;
       });
     }
-    serverDb.users.forEach(u => {
-      if (u && u.username) userMap.set(u.username.toLowerCase(), u);
-    });
-    const mergedUsers = Array.from(userMap.values());
 
-    // Expedisi Union
-    const expedisiMap = new Map<string, Expedisi>();
-    if (clientDb.expedisi && Array.isArray(clientDb.expedisi)) {
-      clientDb.expedisi.forEach((e: Expedisi) => {
-        if (e && e.id && !delExp.includes(e.id)) expedisiMap.set(e.id, e);
-      });
-    }
-    serverDb.expedisi.forEach(e => {
-      if (e && e.id) expedisiMap.set(e.id, e);
+    const processedScans = ((scans as ScanRecord[]) || []).map(s => {
+      let uName = s.userName;
+      if (!uName || !uName.trim()) {
+        uName = userMapSync[s.userId] || (s.userId && userMapSync[s.userId.toLowerCase()]) || s.userId || "Muhammad Padli (Admin)";
+      }
+      return {
+        ...s,
+        userName: uName
+      };
     });
-    const mergedExpedisi = Array.from(expedisiMap.values());
 
-    // Layanan Union
-    const layananMap = new Map<string, Layanan>();
-    if (clientDb.layanan && Array.isArray(clientDb.layanan)) {
-      clientDb.layanan.forEach((l: Layanan) => {
-        if (l && l.id && !delLay.includes(l.id)) layananMap.set(l.id, l);
-      });
-    }
-    serverDb.layanan.forEach(l => {
-      if (l && l.id) layananMap.set(l.id, l);
-    });
-    const mergedLayanan = Array.from(layananMap.values());
+    const [delUsersRows] = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'user'");
+    const [delExpRows] = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'expedisi'");
+    const [delLayRows] = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'layanan'");
+    const [delScansRows] = await p.query("SELECT item_id FROM deleted_items WHERE item_type = 'scan'");
 
-    // Login History
-    const loginHistoryMap = new Map<string, LoginHistory>();
-    if (clientDb.loginHistory && Array.isArray(clientDb.loginHistory)) {
-      clientDb.loginHistory.forEach((lh: LoginHistory) => {
-        if (lh && lh.id) loginHistoryMap.set(lh.id, lh);
-      });
-    }
-    serverDb.loginHistory.forEach(lh => {
-      if (lh && lh.id) loginHistoryMap.set(lh.id, lh);
-    });
-    const mergedLoginHistory = Array.from(loginHistoryMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
-
-    // Activity Log
-    const activityLogMap = new Map<string, ActivityLog>();
-    if (clientDb.activityLog && Array.isArray(clientDb.activityLog)) {
-      clientDb.activityLog.forEach((al: ActivityLog) => {
-        if (al && al.id) activityLogMap.set(al.id, al);
-      });
-    }
-    serverDb.activityLog.forEach(al => {
-      if (al && al.id) activityLogMap.set(al.id, al);
-    });
-    const mergedActivityLog = Array.from(activityLogMap.values()).sort((a, b) => b.waktu.localeCompare(a.waktu));
-
-    const mergedDb: DbSchema = {
-      users: mergedUsers,
-      expedisi: mergedExpedisi,
-      layanan: mergedLayanan,
-      scans: mergedScans,
-      loginHistory: mergedLoginHistory,
-      activityLog: mergedActivityLog,
-      deletedUsers: serverDb.deletedUsers || [],
-      deletedExpedisi: serverDb.deletedExpedisi || [],
-      deletedLayanan: serverDb.deletedLayanan || [],
-      deletedScans: serverDb.deletedScans || []
+    const serverDb: DbSchema = {
+      users: users as User[],
+      expedisi: expedisi as Expedisi[],
+      layanan: layanan as Layanan[],
+      scans: processedScans,
+      loginHistory: loginHistory as LoginHistory[],
+      activityLog: activityLog as ActivityLog[],
+      deletedUsers: (delUsersRows as any[]).map(r => r.item_id),
+      deletedExpedisi: (delExpRows as any[]).map(r => r.item_id),
+      deletedLayanan: (delLayRows as any[]).map(r => r.item_id),
+      deletedScans: (delScansRows as any[]).map(r => r.item_id)
     };
 
-    await dbService.saveAll(mergedDb);
-    return res.json({ db: mergedDb });
+    return res.json({ db: serverDb });
   } catch (err: any) {
-    console.error("Error in sync endpoint:", err);
-    return res.status(500).json({
-      message: "Terjadi kesalahan internal pada server (Sync API).",
-      error: err?.message || String(err),
-      stack: err?.stack
-    });
+    console.error("[DB ERROR] Error in sync endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
 // 4. GET /api/dashboard/stats
 app.get("/api/dashboard/stats", async (req: Request, res: Response) => {
-  const db = await dbService.loadAll();
-  const info = getWIBDateTimeString();
-  const todayYMD = info.ymd;
-  const thisMonthYM = info.ym;
+  try {
+    const p = getPool();
+    const info = getWIBDateTimeString();
+    const todayYMD = info.ymd;
+    const thisMonthYM = info.ym;
 
-  const scansHariIni = db.scans.filter(s => s.waktu.startsWith(todayYMD));
-  const scansBulanIni = db.scans.filter(s => s.waktu.startsWith(thisMonthYM));
+    console.log(`[API DASHBOARD STATS] Calculating stats for today: ${todayYMD}, month: ${thisMonthYM}`);
 
-  const totalScanHariIni = scansHariIni.length;
-  const totalScanBulanIni = scansBulanIni.length;
-  const totalUser = db.users.length;
-  const totalExpedisi = db.expedisi.length;
-
-  const scansInstanHariIni = scansHariIni.filter(s => s.layanan === "Instan").length;
-  const scansRegulerHariIni = scansHariIni.filter(s => s.layanan === "Regular").length;
-
-  // Formula Point otomatis:
-  // Instan: 2 atau 3 resi = 1 point
-  const pointInstanHariIni = Math.floor(scansInstanHariIni / 3) + (scansInstanHariIni % 3 === 2 ? 1 : 0);
-  const pointRegulerHariIni = scansRegulerHariIni * 1;
-
-  // Scan Per Hari (last 7 days)
-  const scanPerHari: { [key: string]: number } = {};
-  const todayObj = new Date();
-  for (let i = 6; i >= 0; i--) {
-    const wibDay = new Date(todayObj.getTime() - (i * 24 * 60 * 60 * 1000));
-    const dayInfo = getWIBDateTimeString(wibDay);
-    scanPerHari[dayInfo.ymd] = 0;
-  }
-  db.scans.forEach(s => {
-    const sDate = s.waktu.split(" ")[0];
-    if (scanPerHari[sDate] !== undefined) {
-      scanPerHari[sDate]++;
-    }
-  });
-  const chartScanPerHari = Object.keys(scanPerHari).map(k => ({
-    tanggal: k.substring(5), // MM-DD
-    total: scanPerHari[k]
-  }));
-
-  // Scan Per Bulan (2026)
-  const scanPerBulan: { [key: string]: number } = {
-    "01": 0, "02": 0, "03": 0, "04": 0, "05": 0, "06": 0, "07": 0, "08": 0, "09": 0, "10": 0, "11": 0, "12": 0
-  };
-  db.scans.forEach(s => {
-    const parts = s.waktu.split("-");
-    if (parts[0] === "2026") {
-      const m = parts[1];
-      if (scanPerBulan[m] !== undefined) {
-        scanPerBulan[m]++;
+    // Safe query helper
+    const safeQuery = async (sql: string, params: any[] = []): Promise<any[]> => {
+      try {
+        const [rows]: any = await p.query(sql, params);
+        return Array.isArray(rows) ? rows : [];
+      } catch (err: any) {
+        console.warn("[API DASHBOARD STATS WARN] Query execution error:", sql, err?.message || err);
+        return [];
       }
+    };
+
+    // Fetch all records for memory aggregation to ensure 100% precision regardless of SQL engine differences
+    const allScans = await safeQuery("SELECT * FROM scans");
+    const allUsers = await safeQuery("SELECT * FROM users");
+    const allExpedisi = await safeQuery("SELECT * FROM expedisi");
+
+    const todayScans = allScans.filter(s => (s && s.waktu && String(s.waktu).startsWith(todayYMD)));
+    const monthScans = allScans.filter(s => (s && s.waktu && String(s.waktu).startsWith(thisMonthYM)));
+
+    const totalScanHariIni = todayScans.length;
+    const totalScanBulanIni = monthScans.length;
+    const totalUser = allUsers.length;
+    const totalExpedisi = allExpedisi.length;
+
+    const scansInstanHariIni = todayScans.filter(s => {
+      const lay = (s.layanan || "").toString().toLowerCase().trim();
+      return lay === "instan";
+    }).length;
+
+    const scansRegulerHariIni = todayScans.filter(s => {
+      const lay = (s.layanan || "").toString().toLowerCase().trim();
+      return lay === "regular" || lay === "reguler";
+    }).length;
+
+    const pointInstanHariIni = Math.floor(scansInstanHariIni / 3) + (scansInstanHariIni % 3 === 2 ? 1 : 0);
+    const pointRegulerHariIni = scansRegulerHariIni * 1;
+
+    // Scan Per Hari (last 7 days)
+    const todayObj = new Date();
+    const last7DaysMap: { [key: string]: number } = {};
+    for (let i = 6; i >= 0; i--) {
+      const wibDay = new Date(todayObj.getTime() - (i * 24 * 60 * 60 * 1000));
+      const dayInfo = getWIBDateTimeString(wibDay);
+      last7DaysMap[dayInfo.ymd] = 0;
     }
-  });
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-  const chartScanPerBulan = Object.keys(scanPerBulan).map(k => ({
-    bulan: monthNames[parseInt(k) - 1],
-    total: scanPerBulan[k]
-  }));
 
-  // Expedisi counts
-  const expedisiCount: { [key: string]: number } = {};
-  db.scans.forEach(s => {
-    expedisiCount[s.expedisi] = (expedisiCount[s.expedisi] || 0) + 1;
-  });
-  const chartExpedisi = Object.keys(expedisiCount).map(k => ({
-    name: k,
-    total: expedisiCount[k]
-  })).sort((a, b) => b.total - a.total).slice(0, 5);
+    allScans.forEach(s => {
+      if (s && s.waktu) {
+        const dateStr = String(s.waktu).substring(0, 10);
+        if (last7DaysMap[dateStr] !== undefined) {
+          last7DaysMap[dateStr]++;
+        }
+      }
+    });
 
-  // Layanan counts
-  const layananCount: { [key: string]: number } = {};
-  db.scans.forEach(s => {
-    layananCount[s.layanan] = (layananCount[s.layanan] || 0) + 1;
-  });
-  const chartLayanan = Object.keys(layananCount).map(k => ({
-    name: k,
-    total: layananCount[k]
-  })).sort((a, b) => b.total - a.total);
+    const chartScanPerHari = Object.keys(last7DaysMap).map(k => ({
+      tanggal: k.substring(5), // MM-DD
+      total: last7DaysMap[k]
+    }));
 
-  const liveFeed = db.scans.slice(-10).reverse();
+    // Scan Per Bulan (current year)
+    const currentYear = todayYMD.substring(0, 4);
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+    const scanPerBulanMap: { [key: string]: number } = {
+      "01": 0, "02": 0, "03": 0, "04": 0, "05": 0, "06": 0, "07": 0, "08": 0, "09": 0, "10": 0, "11": 0, "12": 0
+    };
 
-  return res.json({
-    totalScanHariIni,
-    totalScanBulanIni,
-    totalUser,
-    totalExpedisi,
-    scansInstanHariIni,
-    scansRegulerHariIni,
-    pointInstanHariIni,
-    pointRegulerHariIni,
-    charts: {
-      scanPerHari: chartScanPerHari,
-      scanPerBulan: chartScanPerBulan,
-      expedisi: chartExpedisi,
-      layanan: chartLayanan
-    },
-    liveFeed
-  });
+    allScans.forEach(s => {
+      if (s && s.waktu && String(s.waktu).startsWith(currentYear)) {
+        const monthStr = String(s.waktu).substring(5, 7);
+        if (scanPerBulanMap[monthStr] !== undefined) {
+          scanPerBulanMap[monthStr]++;
+        }
+      }
+    });
+
+    const chartScanPerBulan = Object.keys(scanPerBulanMap).map(k => ({
+      bulan: monthNames[parseInt(k, 10) - 1],
+      total: scanPerBulanMap[k]
+    }));
+
+    // Top Expedisi
+    const expCountMap: { [key: string]: number } = {};
+    const layCountMap: { [key: string]: number } = {};
+
+    allScans.forEach(s => {
+      if (s && s.expedisi && String(s.expedisi).trim()) {
+        const expName = String(s.expedisi).trim();
+        expCountMap[expName] = (expCountMap[expName] || 0) + 1;
+      }
+      if (s && s.layanan && String(s.layanan).trim()) {
+        const layName = String(s.layanan).trim();
+        layCountMap[layName] = (layCountMap[layName] || 0) + 1;
+      }
+    });
+
+    const chartExpedisi = Object.keys(expCountMap)
+      .map(k => ({ name: k, total: expCountMap[k] }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    const chartLayanan = Object.keys(layCountMap)
+      .map(k => ({ name: k, total: layCountMap[k] }))
+      .sort((a, b) => b.total - a.total);
+
+    // Live Feed
+    const userMapStats: { [key: string]: string } = {};
+    if (Array.isArray(allUsers)) {
+      allUsers.forEach((u: any) => {
+        const displayName = u.name || u.username;
+        if (u.id) userMapStats[u.id] = displayName;
+        if (u.username) userMapStats[String(u.username).toLowerCase()] = displayName;
+        if (u.name) userMapStats[String(u.name).toLowerCase()] = displayName;
+      });
+    }
+
+    const sortedScans = [...allScans].sort((a, b) => {
+      const timeA = String(a.waktu || "");
+      const timeB = String(b.waktu || "");
+      return timeB.localeCompare(timeA);
+    }).slice(0, 10);
+
+    const processedLiveFeed = sortedScans.map((s: any) => {
+      let uName = s.userName;
+      if (!uName || !String(uName).trim()) {
+        uName = userMapStats[s.userId] || (s.userId && userMapStats[String(s.userId).toLowerCase()]) || s.userId || "Muhammad Padli (Admin)";
+      }
+      return {
+        id: s.id,
+        userId: s.userId,
+        userName: uName,
+        resi: s.resi,
+        waktu: s.waktu,
+        layanan: s.layanan,
+        expedisi: s.expedisi
+      };
+    });
+
+    console.log(`[API DASHBOARD STATS SUCCESS] Scans Today: ${totalScanHariIni} (Instan: ${scansInstanHariIni}, Reguler: ${scansRegulerHariIni}), Total Scans Month: ${totalScanBulanIni}`);
+
+    return res.json({
+      totalScanHariIni,
+      totalScanBulanIni,
+      totalUser,
+      totalExpedisi,
+      scansInstanHariIni,
+      scansRegulerHariIni,
+      pointInstanHariIni,
+      pointRegulerHariIni,
+      charts: {
+        scanPerHari: chartScanPerHari,
+        scanPerBulan: chartScanPerBulan,
+        expedisi: chartExpedisi,
+        layanan: chartLayanan
+      },
+      liveFeed: processedLiveFeed
+    });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in dashboard stats endpoint:", err);
+    return res.json({
+      totalScanHariIni: 0,
+      totalScanBulanIni: 0,
+      totalUser: 0,
+      totalExpedisi: 0,
+      scansInstanHariIni: 0,
+      scansRegulerHariIni: 0,
+      pointInstanHariIni: 0,
+      pointRegulerHariIni: 0,
+      charts: {
+        scanPerHari: [],
+        scanPerBulan: [],
+        expedisi: [],
+        layanan: []
+      },
+      liveFeed: []
+    });
+  }
 });
 
 // 5. GET /api/scans
 app.get("/api/scans", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  const db = await dbService.loadAll();
+  try {
+    const p = getPool();
+    const id = (req.query.id || req.params.id) as string | undefined;
 
-  if (id) {
-    const scan = db.scans.find(s => s.id === id);
-    if (!scan) return res.status(404).json({ message: "Data scan tidak ditemukan!" });
-    return res.json(scan);
-  }
+    if (id) {
+      const [rows]: any = await p.query("SELECT * FROM scans WHERE id = ? LIMIT 1", [id]);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ message: "Data scan tidak ditemukan!" });
+      }
+      return res.json(rows[0]);
+    }
 
-  const { range, username } = req.query;
-  let filtered = [...db.scans];
+    const { range, username } = req.query;
+    let sql = "SELECT * FROM scans WHERE 1=1";
+    const params: any[] = [];
 
-  if (username) {
-    const target = (username as string).trim().toLowerCase();
-    filtered = filtered.filter(s => {
-      const matchName = s.userName.trim().toLowerCase() === target;
-      const u = db.users.find(usr => 
-        usr.name.trim().toLowerCase() === s.userName.trim().toLowerCase() || 
-        usr.username.trim().toLowerCase() === s.userName.trim().toLowerCase()
-      );
-      const matchUsername = u && (
-        u.username.trim().toLowerCase() === target || 
-        u.name.trim().toLowerCase() === target
-      );
-      return matchName || matchUsername;
+    if (username) {
+      const target = (username as string).trim().toLowerCase();
+      sql += " AND (LOWER(userName) = ? OR userId IN (SELECT id FROM users WHERE LOWER(username) = ? OR LOWER(name) = ?))";
+      params.push(target, target, target);
+    }
+
+    if (range === "latest24h") {
+      const info = getWIBDateTimeString();
+      sql += " AND waktu LIKE ?";
+      params.push(`${info.ymd}%`);
+    }
+
+    sql += " ORDER BY waktu DESC, id DESC";
+
+    const [rows]: any = await p.query(sql, params);
+
+    // Build user map to resolve missing user names
+    const userMap: { [key: string]: string } = {};
+    const [allUsers]: any = await p.query("SELECT id, name, username FROM users");
+    if (Array.isArray(allUsers)) {
+      allUsers.forEach((u: any) => {
+        const displayName = u.name || u.username;
+        if (u.id) userMap[u.id] = displayName;
+        if (u.username) userMap[u.username.toLowerCase()] = displayName;
+        if (u.name) userMap[u.name.toLowerCase()] = displayName;
+      });
+    }
+
+    const processedRows = (rows || []).map((s: any) => {
+      let uName = s.userName || s.username;
+      if (!uName || !uName.trim()) {
+        uName = userMap[s.userId] || (s.userId && userMap[s.userId.toLowerCase()]) || s.userId || "Muhammad Padli (Admin)";
+      }
+      return {
+        ...s,
+        userName: uName
+      };
     });
-  }
 
-  if (range === "latest24h") {
-    const info = getWIBDateTimeString();
-    filtered = filtered.filter(s => s.waktu.startsWith(info.ymd));
+    return res.json(processedRows);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in get scans endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  filtered.reverse();
-  return res.json(filtered);
 });
 
 // 6. POST /api/scans
 app.post("/api/scans", async (req: Request, res: Response) => {
-  const { resi, layanan, expedisi, userName } = req.body;
-  const finalExpedisi = (layanan === "Instan") ? (expedisi || "-") : expedisi;
+  try {
+    const { resi, layanan, expedisi, userName, username, name, user: userField } = req.body;
+    const finalExpedisi = (layanan === "Instan") ? (expedisi || "-") : (expedisi || "");
+    const rawUserName = (userName || username || name || userField || "").trim();
 
-  if (!resi || !layanan || !finalExpedisi || !userName) {
-    return res.status(400).json({ message: "Resi, Layanan, Expedisi, dan User Name wajib diisi!" });
+    if (!resi || !layanan || !finalExpedisi) {
+      return res.status(400).json({ message: "Resi, Layanan, dan Expedisi wajib diisi!" });
+    }
+
+    const p = getPool();
+    const trimmedResi = resi.trim();
+
+    // Validate duplicate resi
+    const [dupRows]: any = await p.query(
+      "SELECT 1 FROM scans WHERE LOWER(resi) = LOWER(?) LIMIT 1",
+      [trimmedResi]
+    );
+    if (dupRows && dupRows.length > 0) {
+      return res.status(400).json({ message: `Gagal! No Resi [${trimmedResi}] sudah pernah digunakan/discan sebelumnya!` });
+    }
+
+    // Lookup user ID & Name
+    let userId = "U001";
+    let resolvedUserName = rawUserName || "Muhammad Padli (Admin)";
+
+    if (rawUserName) {
+      const [userRows]: any = await p.query(
+        "SELECT id, name, username FROM users WHERE LOWER(name) = LOWER(?) OR LOWER(username) = LOWER(?) OR LOWER(id) = LOWER(?) LIMIT 1",
+        [rawUserName, rawUserName, rawUserName]
+      );
+      if (userRows && userRows.length > 0) {
+        userId = userRows[0].id || "U001";
+        resolvedUserName = userRows[0].name || userRows[0].username || rawUserName;
+      }
+    } else {
+      const [firstUserRows]: any = await p.query("SELECT id, name, username FROM users WHERE status = 'Active' LIMIT 1");
+      if (firstUserRows && firstUserRows.length > 0) {
+        userId = firstUserRows[0].id || "U001";
+        resolvedUserName = firstUserRows[0].name || firstUserRows[0].username || "Muhammad Padli (Admin)";
+      }
+    }
+
+    // Serial ID Generator: LOG-YYYYMMDD-XXXX
+    const info = getWIBDateTimeString();
+    const dateKey = info.dateKey;
+    const todayYMD = info.ymd;
+
+    const [scansCountRows]: any = await p.query(
+      "SELECT COUNT(*) as count FROM scans WHERE waktu LIKE ?",
+      [`${todayYMD}%`]
+    );
+    let dailySeq = (scansCountRows[0]?.count || 0) + 1;
+    let serialId = `LOG-${dateKey}-${pad4(dailySeq)}`;
+    while (true) {
+      const [chk]: any = await p.query("SELECT 1 FROM scans WHERE id = ? LIMIT 1", [serialId]);
+      if (!chk || chk.length === 0) break;
+      dailySeq++;
+      serialId = `LOG-${dateKey}-${pad4(dailySeq)}`;
+    }
+
+    const newScan: ScanRecord = {
+      id: serialId,
+      userId,
+      userName: resolvedUserName,
+      resi: trimmedResi.toUpperCase(),
+      waktu: info.full,
+      layanan,
+      expedisi: finalExpedisi
+    };
+
+    console.log("[API SCAN INSERT] Processing new scan:", JSON.stringify(newScan));
+
+    const [insertResult]: any = await p.query(
+      "INSERT INTO scans (id, userId, userName, resi, waktu, layanan, expedisi) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [newScan.id, newScan.userId || "", newScan.userName || "", newScan.resi || "", newScan.waktu || "", newScan.layanan || "", newScan.expedisi || ""]
+    );
+
+    console.log("[API SCAN INSERT SUCCESS] DB insert result:", JSON.stringify(insertResult));
+
+    await logActivity(resolvedUserName, `Berhasil scan resi logistik [${newScan.resi}] via Web Scanner`);
+
+    return res.status(201).json({
+      message: "Scan Berhasil",
+      scan: newScan
+    });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in post scans endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  const db = await dbService.loadAll();
-
-  // Validate duplicate resi
-  const isDuplicate = db.scans.some(s => s.resi.trim().toLowerCase() === resi.trim().toLowerCase());
-  if (isDuplicate) {
-    return res.status(400).json({ message: `Gagal! No Resi [${resi}] sudah pernah digunakan/discan sebelumnya!` });
-  }
-
-  const user = db.users.find(u => u.name === userName || u.username === userName);
-  const userId = user ? user.id : "U000";
-
-  // Serial ID Generator: LOG-YYYYMMDD-XXXX
-  const info = getWIBDateTimeString();
-  const dateKey = info.dateKey;
-  const todayYMD = info.ymd;
-  
-  const scansHariIni = db.scans.filter(s => s.waktu.startsWith(todayYMD));
-  const dailySeq = scansHariIni.length + 1;
-  const serialId = `LOG-${dateKey}-${pad4(dailySeq)}`;
-
-  const newScan: ScanRecord = {
-    id: serialId,
-    userId,
-    userName: user ? user.name : userName,
-    resi: resi.trim().toUpperCase(),
-    waktu: info.full,
-    layanan,
-    expedisi: finalExpedisi
-  };
-
-  db.scans.push(newScan);
-  await dbService.saveAll(db);
-  await dbService.logActivity(user ? user.username : userName, `Berhasil scan resi logistik [${newScan.resi}] via Web Scanner`);
-
-  return res.status(201).json({
-    message: "Scan Berhasil",
-    scan: newScan
-  });
 });
 
 // 7. DELETE /api/scans/:id
 app.delete("/api/scans/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID scan wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID scan wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const scanIndex = db.scans.findIndex(s => s.id === id);
-  if (scanIndex === -1) {
-    return res.status(404).json({ message: "Data scan tidak ditemukan!" });
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT resi, id FROM scans WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Data scan tidak ditemukan!" });
+    }
+
+    const scan = rows[0];
+    await p.query("DELETE FROM scans WHERE id = ?", [id]);
+    await p.query("INSERT INTO deleted_items (item_type, item_id) VALUES ('scan', ?)", [id]);
+
+    await logActivity("admin", `Menghapus data scan resi: ${scan.resi} (Serial ID: ${scan.id})`);
+
+    return res.json({ message: "Data scan berhasil dihapus!" });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in delete scan endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  const scan = db.scans[scanIndex];
-  db.scans.splice(scanIndex, 1);
-  if (!db.deletedScans) db.deletedScans = [];
-  if (!db.deletedScans.includes(id)) {
-    db.deletedScans.push(id);
-  }
-  
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Menghapus data scan resi: ${scan.resi} (Serial ID: ${scan.id})`);
-
-  return res.json({ message: "Data scan berhasil dihapus!" });
 });
 
 // 8. GET /api/users
 app.get("/api/users", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  const db = await dbService.loadAll();
+  try {
+    const p = getPool();
+    const id = (req.query.id || req.params.id) as string | undefined;
 
-  if (id) {
-    const user = db.users.find(u => u.id === id);
-    if (!user) return res.status(404).json({ message: "User tidak ditemukan!" });
-    return res.json(user);
+    if (id) {
+      const [rows]: any = await p.query("SELECT * FROM users WHERE id = ? LIMIT 1", [id]);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ message: "User tidak ditemukan!" });
+      }
+      return res.json(rows[0]);
+    }
+
+    const [rows]: any = await p.query("SELECT * FROM users");
+    return res.json(rows || []);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in get users endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  return res.json(db.users);
 });
 
 // 9. POST /api/users
 app.post("/api/users", async (req: Request, res: Response) => {
-  const { name, username, email, password, role, status } = req.body;
-  if (!name || !username || !email || !password || !role) {
-    return res.status(400).json({ message: "Nama, Username, Email, Password, dan Role wajib diisi!" });
+  try {
+    const { name, username, email, password, role, status } = req.body;
+    if (!name || !username || !email || !password || !role) {
+      return res.status(400).json({ message: "Nama, Username, Email, Password, dan Role wajib diisi!" });
+    }
+
+    const p = getPool();
+    const [existRows]: any = await p.query(
+      "SELECT 1 FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) LIMIT 1",
+      [username, email]
+    );
+    if (existRows && existRows.length > 0) {
+      return res.status(400).json({ message: "Username atau Email sudah digunakan!" });
+    }
+
+    const [countRows]: any = await p.query("SELECT COUNT(*) as count FROM users");
+    let userSeq = (countRows[0]?.count || 0) + 1;
+    let newId = `U${pad3(userSeq)}`;
+    while (true) {
+      const [chk]: any = await p.query("SELECT 1 FROM users WHERE id = ? LIMIT 1", [newId]);
+      if (!chk || chk.length === 0) break;
+      userSeq++;
+      newId = `U${pad3(userSeq)}`;
+    }
+
+    const newUser: User = {
+      id: newId,
+      name,
+      username,
+      email,
+      password,
+      role,
+      status: status || "Active"
+    };
+
+    await p.query(
+      "INSERT INTO users (id, name, username, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [newUser.id, newUser.name || "", newUser.username || "", newUser.email || "", newUser.password || "", newUser.role || "Packing", newUser.status || "Active"]
+    );
+
+    await logActivity("admin", `Membuat user baru: ${username} (${role})`);
+
+    return res.status(201).json(newUser);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in post users endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  const db = await dbService.loadAll();
-
-  // Validate uniqueness
-  const existsUser = db.users.some(u => u.username.toLowerCase() === username.toLowerCase() || u.email.toLowerCase() === email.toLowerCase());
-  if (existsUser) {
-    return res.status(400).json({ message: "Username atau Email sudah digunakan!" });
-  }
-
-  const newUser: User = {
-    id: `U${pad3(db.users.length + 1)}`,
-    name,
-    username,
-    email,
-    password, // Plain text as requested
-    role,
-    status: status || "Active"
-  };
-
-  db.users.push(newUser);
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Membuat user baru: ${username} (${role})`);
-
-  return res.status(201).json(newUser);
 });
 
 // 10. PUT /api/users/:id
 app.put("/api/users/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID User wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID User wajib diisi!" });
 
-  const { name, username, email, password, role, status } = req.body;
-  const db = await dbService.loadAll();
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT * FROM users WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "User tidak ditemukan!" });
+    }
 
-  const userIndex = db.users.findIndex(u => u.id === id);
-  if (userIndex === -1) {
-    return res.status(404).json({ message: "User tidak ditemukan!" });
+    const oldUser: User = rows[0];
+    const { name, username, email, password, role, status } = req.body;
+
+    const updatedUser: User = {
+      id: oldUser.id,
+      name: name ?? oldUser.name,
+      username: username ?? oldUser.username,
+      email: email ?? oldUser.email,
+      password: password ?? oldUser.password,
+      role: role ?? oldUser.role,
+      status: status ?? oldUser.status
+    };
+
+    await p.query(
+      "UPDATE users SET name = ?, username = ?, email = ?, password = ?, role = ?, status = ? WHERE id = ?",
+      [updatedUser.name || "", updatedUser.username || "", updatedUser.email || "", updatedUser.password || "", updatedUser.role || "Packing", updatedUser.status || "Active", id]
+    );
+
+    await logActivity("admin", `Mengupdate profil/status user: ${updatedUser.username}`);
+
+    return res.json(updatedUser);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in put user endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  const oldUser = db.users[userIndex];
-  db.users[userIndex] = {
-    ...oldUser,
-    name: name ?? oldUser.name,
-    username: username ?? oldUser.username,
-    email: email ?? oldUser.email,
-    password: password ?? oldUser.password,
-    role: role ?? oldUser.role,
-    status: status ?? oldUser.status
-  };
-
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Mengupdate profil/status user: ${db.users[userIndex].username}`);
-
-  return res.json(db.users[userIndex]);
 });
 
 // 11. DELETE /api/users/:id
 app.delete("/api/users/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID User wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID User wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const user = db.users.find(u => u.id === id);
-  if (!user) return res.status(404).json({ message: "User tidak ditemukan!" });
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT username FROM users WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "User tidak ditemukan!" });
+    }
 
-  db.users = db.users.filter(u => u.id !== id);
-  if (!db.deletedUsers) db.deletedUsers = [];
-  if (!db.deletedUsers.includes(id)) {
-    db.deletedUsers.push(id);
+    const username = rows[0].username;
+    await p.query("DELETE FROM users WHERE id = ?", [id]);
+    await p.query("INSERT INTO deleted_items (item_type, item_id) VALUES ('user', ?)", [id]);
+
+    await logActivity("admin", `Menghapus user: ${username}`);
+
+    return res.json({ message: "User berhasil dihapus!" });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in delete user endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Menghapus user: ${user.username}`);
-
-  return res.json({ message: "User berhasil dihapus!" });
 });
 
 // 12. GET /api/expedisi
 app.get("/api/expedisi", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  const db = await dbService.loadAll();
+  try {
+    const p = getPool();
+    const id = (req.query.id || req.params.id) as string | undefined;
 
-  if (id) {
-    const exp = db.expedisi.find(e => e.id === id);
-    if (!exp) return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
-    return res.json(exp);
+    if (id) {
+      const [rows]: any = await p.query("SELECT * FROM expedisi WHERE id = ? LIMIT 1", [id]);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
+      }
+      return res.json(rows[0]);
+    }
+
+    const [rows]: any = await p.query("SELECT * FROM expedisi");
+    return res.json(rows || []);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in get expedisi endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  return res.json(db.expedisi);
 });
 
 // 13. POST /api/expedisi
 app.post("/api/expedisi", async (req: Request, res: Response) => {
-  const { name, status } = req.body;
-  if (!name) return res.status(400).json({ message: "Nama expedisi wajib diisi!" });
+  try {
+    const { name, status } = req.body;
+    if (!name) return res.status(400).json({ message: "Nama expedisi wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const newExp: Expedisi = {
-    id: `E${pad3(db.expedisi.length + 1)}`,
-    name,
-    status: status || "Active"
-  };
+    const p = getPool();
+    const [countRows]: any = await p.query("SELECT COUNT(*) as count FROM expedisi");
+    let expSeq = (countRows[0]?.count || 0) + 1;
+    let newId = `E${pad3(expSeq)}`;
+    while (true) {
+      const [chk]: any = await p.query("SELECT 1 FROM expedisi WHERE id = ? LIMIT 1", [newId]);
+      if (!chk || chk.length === 0) break;
+      expSeq++;
+      newId = `E${pad3(expSeq)}`;
+    }
 
-  db.expedisi.push(newExp);
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Membuat expedisi baru: ${name}`);
+    const newExp: Expedisi = {
+      id: newId,
+      name,
+      status: status || "Active"
+    };
 
-  return res.status(201).json(newExp);
+    await p.query("INSERT INTO expedisi (id, name, status) VALUES (?, ?, ?)", [newExp.id, newExp.name || "", newExp.status || "Active"]);
+    await logActivity("admin", `Membuat expedisi baru: ${name}`);
+
+    return res.status(201).json(newExp);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in post expedisi endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 14. PUT /api/expedisi/:id
 app.put("/api/expedisi/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID Expedisi wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID Expedisi wajib diisi!" });
 
-  const { name, status } = req.body;
-  const db = await dbService.loadAll();
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT * FROM expedisi WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
+    }
 
-  const idx = db.expedisi.findIndex(e => e.id === id);
-  if (idx === -1) return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
+    const oldExp: Expedisi = rows[0];
+    const { name, status } = req.body;
 
-  db.expedisi[idx] = {
-    ...db.expedisi[idx],
-    name: name ?? db.expedisi[idx].name,
-    status: status ?? db.expedisi[idx].status
-  };
+    const updatedExp: Expedisi = {
+      id: oldExp.id,
+      name: name ?? oldExp.name,
+      status: status ?? oldExp.status
+    };
 
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Mengupdate expedisi: ${db.expedisi[idx].name}`);
+    await p.query("UPDATE expedisi SET name = ?, status = ? WHERE id = ?", [updatedExp.name || "", updatedExp.status || "Active", id]);
+    await logActivity("admin", `Mengupdate expedisi: ${updatedExp.name}`);
 
-  return res.json(db.expedisi[idx]);
+    return res.json(updatedExp);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in put expedisi endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 15. DELETE /api/expedisi/:id
 app.delete("/api/expedisi/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID Expedisi wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID Expedisi wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const exp = db.expedisi.find(e => e.id === id);
-  if (!exp) return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT name FROM expedisi WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Expedisi tidak ditemukan!" });
+    }
 
-  db.expedisi = db.expedisi.filter(e => e.id !== id);
-  if (!db.deletedExpedisi) db.deletedExpedisi = [];
-  if (!db.deletedExpedisi.includes(id)) {
-    db.deletedExpedisi.push(id);
+    const name = rows[0].name;
+    await p.query("DELETE FROM expedisi WHERE id = ?", [id]);
+    await p.query("INSERT INTO deleted_items (item_type, item_id) VALUES ('expedisi', ?)", [id]);
+
+    await logActivity("admin", `Menghapus expedisi: ${name}`);
+
+    return res.json({ message: "Expedisi berhasil dihapus" });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in delete expedisi endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Menghapus expedisi: ${exp.name}`);
-
-  return res.json({ message: "Expedisi berhasil dihapus" });
 });
 
 // 16. GET /api/layanan
 app.get("/api/layanan", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  const db = await dbService.loadAll();
+  try {
+    const p = getPool();
+    const id = (req.query.id || req.params.id) as string | undefined;
 
-  if (id) {
-    const lay = db.layanan.find(l => l.id === id);
-    if (!lay) return res.status(404).json({ message: "Layanan tidak ditemukan!" });
-    return res.json(lay);
+    if (id) {
+      const [rows]: any = await p.query("SELECT * FROM layanan WHERE id = ? LIMIT 1", [id]);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ message: "Layanan tidak ditemukan!" });
+      }
+      return res.json(rows[0]);
+    }
+
+    const [rows]: any = await p.query("SELECT * FROM layanan");
+    return res.json(rows || []);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in get layanan endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  return res.json(db.layanan);
 });
 
 // 17. POST /api/layanan
 app.post("/api/layanan", async (req: Request, res: Response) => {
-  const { name, status } = req.body;
-  if (!name) return res.status(400).json({ message: "Nama layanan wajib diisi!" });
+  try {
+    const { name, status } = req.body;
+    if (!name) return res.status(400).json({ message: "Nama layanan wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const newLay: Layanan = {
-    id: `L${pad3(db.layanan.length + 1)}`,
-    name,
-    status: status || "Active"
-  };
+    const p = getPool();
+    const [countRows]: any = await p.query("SELECT COUNT(*) as count FROM layanan");
+    let laySeq = (countRows[0]?.count || 0) + 1;
+    let newId = `L${pad3(laySeq)}`;
+    while (true) {
+      const [chk]: any = await p.query("SELECT 1 FROM layanan WHERE id = ? LIMIT 1", [newId]);
+      if (!chk || chk.length === 0) break;
+      laySeq++;
+      newId = `L${pad3(laySeq)}`;
+    }
 
-  db.layanan.push(newLay);
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Membuat layanan baru: ${name}`);
+    const newLay: Layanan = {
+      id: newId,
+      name,
+      status: status || "Active"
+    };
 
-  return res.status(201).json(newLay);
+    await p.query("INSERT INTO layanan (id, name, status) VALUES (?, ?, ?)", [newLay.id, newLay.name || "", newLay.status || "Active"]);
+    await logActivity("admin", `Membuat layanan baru: ${name}`);
+
+    return res.status(201).json(newLay);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in post layanan endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 18. PUT /api/layanan/:id
 app.put("/api/layanan/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID Layanan wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID Layanan wajib diisi!" });
 
-  const { name, status } = req.body;
-  const db = await dbService.loadAll();
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT * FROM layanan WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Layanan tidak ditemukan!" });
+    }
 
-  const idx = db.layanan.findIndex(l => l.id === id);
-  if (idx === -1) return res.status(404).json({ message: "Layanan tidak ditemukan!" });
+    const oldLay: Layanan = rows[0];
+    const { name, status } = req.body;
 
-  db.layanan[idx] = {
-    ...db.layanan[idx],
-    name: name ?? db.layanan[idx].name,
-    status: status ?? db.layanan[idx].status
-  };
+    const updatedLay: Layanan = {
+      id: oldLay.id,
+      name: name ?? oldLay.name,
+      status: status ?? oldLay.status
+    };
 
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Mengupdate jenis layanan: ${db.layanan[idx].name}`);
+    await p.query("UPDATE layanan SET name = ?, status = ? WHERE id = ?", [updatedLay.name || "", updatedLay.status || "Active", id]);
+    await logActivity("admin", `Mengupdate jenis layanan: ${updatedLay.name}`);
 
-  return res.json(db.layanan[idx]);
+    return res.json(updatedLay);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in put layanan endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 19. DELETE /api/layanan/:id
 app.delete("/api/layanan/:id?", async (req: Request, res: Response) => {
-  const id = (req.query.id || req.params.id) as string | undefined;
-  if (!id) return res.status(400).json({ message: "ID Layanan wajib diisi!" });
+  try {
+    const id = (req.query.id || req.params.id) as string | undefined;
+    if (!id) return res.status(400).json({ message: "ID Layanan wajib diisi!" });
 
-  const db = await dbService.loadAll();
-  const lay = db.layanan.find(l => l.id === id);
-  if (!lay) return res.status(404).json({ message: "Layanan tidak ditemukan!" });
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT name FROM layanan WHERE id = ? LIMIT 1", [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Layanan tidak ditemukan!" });
+    }
 
-  db.layanan = db.layanan.filter(l => l.id !== id);
-  if (!db.deletedLayanan) db.deletedLayanan = [];
-  if (!db.deletedLayanan.includes(id)) {
-    db.deletedLayanan.push(id);
+    const name = rows[0].name;
+    await p.query("DELETE FROM layanan WHERE id = ?", [id]);
+    await p.query("INSERT INTO deleted_items (item_type, item_id) VALUES ('layanan', ?)", [id]);
+
+    await logActivity("admin", `Menghapus jenis layanan: ${name}`);
+
+    return res.json({ message: "Layanan berhasil dihapus" });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in delete layanan endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-
-  await dbService.saveAll(db);
-  await dbService.logActivity("admin", `Menghapus jenis layanan: ${lay.name}`);
-
-  return res.json({ message: "Layanan berhasil dihapus" });
 });
 
 // 20. GET /api/logs/login_history
 app.get("/api/logs/login_history", async (req: Request, res: Response) => {
-  const db = await dbService.loadAll();
-  return res.json(db.loginHistory);
+  try {
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT * FROM login_history ORDER BY waktu DESC LIMIT 500");
+    return res.json(rows || []);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in login_history endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 21. GET /api/logs/activity_log
 app.get("/api/logs/activity_log", async (req: Request, res: Response) => {
-  const db = await dbService.loadAll();
-  return res.json(db.activityLog);
+  try {
+    const p = getPool();
+    const [rows]: any = await p.query("SELECT * FROM activity_log ORDER BY waktu DESC LIMIT 500");
+    return res.json(rows || []);
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in activity_log endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // 22. POST /api/logs/activity
 app.post("/api/logs/activity", async (req: Request, res: Response) => {
-  const { userName, action } = req.body;
-  if (!userName || !action) {
-    return res.status(400).json({ message: "Username dan Action wajib diisi" });
+  try {
+    const { userName, action } = req.body;
+    if (!userName || !action) {
+      return res.status(400).json({ message: "Username dan Action wajib diisi" });
+    }
+    await logActivity(userName, action);
+    return res.json({ status: "success" });
+  } catch (err: any) {
+    console.error("[DB ERROR] Error in activity endpoint:", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-  await dbService.logActivity(userName, action);
-  return res.json({ status: "success" });
 });
 
 // Global Fallback/Unmatched routes for API

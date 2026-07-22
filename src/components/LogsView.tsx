@@ -57,17 +57,17 @@ export default function LogsView() {
 
   // Filter login logs based on search
   const filteredLoginLogs = loginLogs.filter(log => 
-    log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.ip.includes(searchTerm) ||
-    log.browser.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.action.toLowerCase().includes(searchTerm.toLowerCase())
+    (log.userName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (log.ip || "").includes(searchTerm) ||
+    (log.browser || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (log.action || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Filter activity logs based on search
   const filteredActivityLogs = activityLogs.filter(log => 
-    log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.waktu.includes(searchTerm)
+    (log.userName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (log.action || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (log.waktu || "").includes(searchTerm)
   );
 
   return (

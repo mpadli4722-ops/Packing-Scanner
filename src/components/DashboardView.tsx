@@ -22,6 +22,7 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fetchStats = async (isSilent = false) => {
     if (!isSilent) setLoading(true);
@@ -32,9 +33,12 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
       if (res.ok) {
         const data = await res.json();
         setStats(data);
+        setErrorMsg(null);
+      } else {
+        if (!isSilent) setErrorMsg("Gagal memuat statistik dari server.");
       }
     } catch (e) {
-      // Silent catch to prevent developer panel warnings
+      if (!isSilent) setErrorMsg("Tidak dapat terhubung ke server backend.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -70,9 +74,9 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
   ];
 
   // Helper values for custom SVG charts
-  const maxScanHari = Math.max(...(stats?.charts.scanPerHari.map(d => d.total) || [10]), 5);
-  const maxScanBulan = Math.max(...(stats?.charts.scanPerBulan.map(d => d.total) || [100]), 10);
-  const maxExpedisi = Math.max(...(stats?.charts.expedisi.map(e => e.total) || [50]), 5);
+  const maxScanHari = Math.max(...(stats?.charts?.scanPerHari?.map(d => d.total) || [10]), 5);
+  const maxScanBulan = Math.max(...(stats?.charts?.scanPerBulan?.map(d => d.total) || [100]), 10);
+  const maxExpedisi = Math.max(...(stats?.charts?.expedisi?.map(e => e.total) || [50]), 5);
 
   return (
     <div className="space-y-6">
@@ -105,6 +109,18 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
           </button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-center justify-between">
+          <span>⚠️ {errorMsg} Menampilkan data statistik default.</span>
+          <button
+            onClick={() => fetchStats(false)}
+            className="px-2.5 py-1 bg-amber-600 text-white font-bold rounded hover:bg-amber-700 transition-colors"
+          >
+            Coba Lagi
+          </button>
+        </div>
+      )}
 
       {/* Stats Bento Grid - Sleek Interface Style */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -156,7 +172,7 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
             </div>
 
             {/* Bars */}
-            {stats?.charts.scanPerHari.map((day, i) => {
+            {(stats?.charts?.scanPerHari || []).map((day, i) => {
               const barHeightPercent = Math.max(8, (day.total / maxScanHari) * 80);
               return (
                 <div key={i} className="flex-1 flex flex-col items-center gap-2 group z-10">
@@ -211,14 +227,14 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 line-clamp-1">
-                      Scanned by <strong className="text-slate-700">{scan.userName.split(" ")[0]}</strong>
+                      Scanned by <strong className="text-slate-700">{scan.userName ? scan.userName.split(" ")[0] : "User"}</strong>
                     </p>
                   </div>
                   
                   <div className="text-right flex flex-col items-end shrink-0">
                     <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1 font-mono">
                       <Clock className="w-3 h-3 text-slate-400" />
-                      {scan.waktu.split(" ")[1]}
+                      {scan.waktu ? (scan.waktu.split(" ")[1] || scan.waktu) : ""}
                     </span>
                     <span className="text-[10px] font-bold text-slate-600 font-mono mt-0.5">
                       {scan.expedisi}
@@ -252,7 +268,7 @@ export default function DashboardView({ onScanClick }: DashboardViewProps) {
             </div>
 
             {/* Monthly Trend Blocks */}
-            {stats?.charts.scanPerBulan.map((mon, i) => {
+            {(stats?.charts?.scanPerBulan || []).map((mon, i) => {
               const active = mon.total > 0;
               const hPercent = active ? (mon.total / maxScanBulan) * 75 : 8;
               return (

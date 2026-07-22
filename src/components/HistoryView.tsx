@@ -121,7 +121,7 @@ export default function HistoryView({ range, currentUser }: HistoryViewProps) {
   };
 
   // Get unique packers, layanan, and expeditions for filter dropdowns (only if Admin/Supervisor)
-  const uniquePackers = Array.from(new Set(scans.map(s => s.userName)));
+  const uniquePackers = Array.from(new Set(scans.map(s => s.userName || s.userId || "Packer Admin"))).filter(Boolean);
   const uniqueLayanan = Array.from(new Set(scans.map(s => s.layanan)));
   const uniqueExpedisi = Array.from(new Set(scans.map(s => s.expedisi)));
 
@@ -163,7 +163,7 @@ export default function HistoryView({ range, currentUser }: HistoryViewProps) {
     const rows = filteredScans.map((scan, index) => [
       index + 1,
       scan.id,
-      scan.userName,
+      scan.userName || scan.userId || "Packer Admin",
       scan.resi,
       new Date(scan.waktu).toLocaleString("id-ID"),
       scan.layanan,
@@ -276,7 +276,7 @@ export default function HistoryView({ range, currentUser }: HistoryViewProps) {
         scan.id,
         new Date(scan.waktu).toLocaleString("id-ID"),
         scan.resi,
-        scan.userName,
+        scan.userName || scan.userId || "Packer Admin",
         scan.layanan,
         scan.expedisi
       ]);
@@ -342,15 +342,15 @@ export default function HistoryView({ range, currentUser }: HistoryViewProps) {
   // Filters + Search Query Processing
   const filteredScans = scans.filter((scan) => {
     const matchesSearch = 
-      scan.resi.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      scan.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      scan.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      scan.expedisi.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      scan.layanan.toLowerCase().includes(searchTerm.toLowerCase());
+      (scan.resi || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (scan.id || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (scan.userName || scan.userId || "Packer Admin").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (scan.expedisi || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (scan.layanan || "").toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesLayanan = selectedLayanan === "Semua" || scan.layanan === selectedLayanan;
     const matchesExpedisi = selectedExpedisi === "Semua" || scan.expedisi === selectedExpedisi;
-    const matchesUser = selectedUser === "Semua" || scan.userName === selectedUser;
+    const matchesUser = selectedUser === "Semua" || (scan.userName || scan.userId || "Packer Admin") === selectedUser;
 
     return matchesSearch && matchesLayanan && matchesExpedisi && matchesUser;
   });
@@ -655,7 +655,7 @@ export default function HistoryView({ range, currentUser }: HistoryViewProps) {
                       {scan.id}
                     </td>
                     <td className="px-5 py-3.5 font-semibold text-slate-700">
-                      {scan.userName}
+                      {scan.userName || scan.userId || "Packer Admin"}
                     </td>
                     <td className="px-5 py-3.5 font-mono text-xs font-semibold text-blue-600 select-all bg-blue-50/10 rounded px-1.5 py-0.5 border border-blue-100/30">
                       {scan.resi}
